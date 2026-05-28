@@ -1,0 +1,23 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+main
+
+# Local database mock
+database_mock.json
+
+# IDEs
+.idea/
+.vscode/
+*.suo
+*.ntvsca
+*.ntvscc
+*.sln
+*.suo
+*.user
+
+# Go dependency directory
+vendor/

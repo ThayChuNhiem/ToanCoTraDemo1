@@ -1,0 +1,3202 @@
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"net/http"
+	"toan-co-tra-backend/config"
+	"toan-co-tra-backend/internal/repository"
+	"toan-co-tra-backend/pkg/database"
+	"toan-co-tra-backend/pkg/event"
+	"toan-co-tra-backend/pkg/logger"
+
+	// Nạp các mô-đun Clean Architecture
+	homepageHttp "toan-co-tra-backend/internal/modules/homepage/delivery/http"
+	homepageUsecase "toan-co-tra-backend/internal/modules/homepage/usecase"
+
+	aboutHttp "toan-co-tra-backend/internal/modules/about/delivery/http"
+	aboutUsecase "toan-co-tra-backend/internal/modules/about/usecase"
+
+	honorHttp "toan-co-tra-backend/internal/modules/honor/delivery/http"
+	honorUsecase "toan-co-tra-backend/internal/modules/honor/usecase"
+
+	salesHttp "toan-co-tra-backend/internal/modules/sales/delivery/http"
+	salesUsecase "toan-co-tra-backend/internal/modules/sales/usecase"
+
+	adminHttp "toan-co-tra-backend/internal/modules/admin_dashboard/delivery/http"
+	adminUsecase "toan-co-tra-backend/internal/modules/admin_dashboard/usecase"
+
+	"toan-co-tra-backend/internal/lead/delivery/chatbot"
+	"toan-co-tra-backend/internal/lead/usecase"
+	leadPg "toan-co-tra-backend/internal/lead/repository/postgres"
+)
+
+func main() {
+	// 1. Khởi tạo Logger & Config
+	log := logger.NewZapLogger("TOAN-CO-TRA-API")
+	log.Info("Đang khởi động hệ thống quản lý học tập Toán Cô Trà mô-đun hóa...")
+	cfg := config.LoadConfig()
+
+	// 2. Khởi tạo Event Dispatcher (SSE Broker)
+	dispatcher := event.NewEventDispatcher()
+
+	// 3. Khởi tạo Central Repository quản lý database_mock.json persistent tập trung
+	repo := repository.NewCentralRepository("./database_mock.json")
+	log.Info("Tải thành công Centralized Mock Storage từ database_mock.json!")
+
+	// 4. Khởi tạo các Use Cases của phân hệ
+	homepageUC := homepageUsecase.NewHomepageUsecase(repo)
+	aboutUC := aboutUsecase.NewAboutUsecase(repo)
+	honorUC := honorUsecase.NewHonorUsecase(repo)
+	salesUC := salesUsecase.NewSalesUsecase(repo)
+	adminUC := adminUsecase.NewAdminUsecase(repo)
+
+	// Khởi tạo các Handlers
+	homepageHandler := homepageHttp.NewHomepageHandler(homepageUC, dispatcher)
+	aboutHandler := aboutHttp.NewAboutHandler(aboutUC)
+	honorHandler := honorHttp.NewHonorHandler(honorUC)
+	salesHandler := salesHttp.NewSalesHandler(salesUC, repo, dispatcher)
+	adminHandler := adminHttp.NewAdminHandler(adminUC, salesHandler)
+
+	// Khởi tạo Stub Chatbot Webhook (Sử dụng luồng cũ làm adapter tương thích)
+	var dummyPool *sql.DB
+	leadOldRepo := leadPg.NewPostgresLeadRepository(dummyPool)
+	leadOldUC := usecase.NewLeadUsecase(leadOldRepo, dispatcher)
+	webhookHandler := chatbot.NewWebhookHandler(leadOldUC, cfg, log)
+
+	// 5. Thiết lập CORS helper
+	setupCORS := func(w http.ResponseWriter, r *http.Request) bool {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return true
+		}
+		return false
+	}
+
+	// 6. Định tuyến API (API Routing)
+	
+	// API Homepage Lớp học & Đăng ký
+	http.HandleFunc("/api/v1/homepage/classes", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		homepageHandler.GetClasses(w, r)
+	})
+
+	http.HandleFunc("/api/v1/registrations", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		if r.Method == http.MethodPost {
+			homepageHandler.Register(w, r)
+		} else if r.Method == http.MethodGet {
+			salesHandler.GetLeads(w, r)
+		} else {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
+
+	// API About Giới thiệu giáo viên
+	http.HandleFunc("/api/v1/about/teachers", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		aboutHandler.GetTeachers(w, r)
+	})
+
+	// API Honor Vinh danh học sinh
+	http.HandleFunc("/api/v1/honor/students", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		honorHandler.GetHonoredStudents(w, r)
+	})
+
+	// API Sales & Authentication
+	http.HandleFunc("/api/v1/registrations/toggle-consulted", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		salesHandler.ToggleConsulted(w, r)
+	})
+
+	http.HandleFunc("/api/v1/registrations/stream", func(w http.ResponseWriter, r *http.Request) {
+		setupCORS(w, r)
+		salesHandler.StreamLeads(w, r)
+	})
+
+	http.HandleFunc("/api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		salesHandler.Login(w, r)
+	})
+
+	http.HandleFunc("/api/v1/auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		salesHandler.Logout(w, r)
+	})
+
+	// API Webhook Chatbot
+	http.HandleFunc("/api/v1/chatbot/webhook", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet {
+			webhookHandler.VerifyWebhook(w, r)
+		} else if r.Method == http.MethodPost {
+			webhookHandler.HandleIncomingMessages(w, r)
+		} else {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
+
+	// API Admin Dashboard
+	http.HandleFunc("/api/v1/admin/reports", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.GetReports(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/classes/update", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.UpdateClassPrice(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/teachers/update", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.UpdateTeacherBio(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/students/manage", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.ManageStudent(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/users/create", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.CreateTeacherAccount(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/upload", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.UploadFile(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/users", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.ListUsers(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/users/delete", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.DeleteUser(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/teachers/manage", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.ManageTeacher(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/classes/manage", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.ManageClass(w, r)
+	})
+
+	// Phục vụ tệp tin tĩnh (Static Assets - ảnh banner và ảnh cô Trà)
+	fs := http.FileServer(http.Dir("./assets"))
+	http.Handle("/assets/", http.StripPrefix("/assets/", fs))
+
+	// 7. Phục vụ giao diện trải nghiệm trực quan đỉnh cao (Interactive Live Playground)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(htmlPlayground))
+	})
+
+	// 8. Khởi chạy máy chủ HTTP
+	fmt.Printf("\n===========================================================\n")
+	fmt.Printf("🚀 HỆ THỐNG GOLANG CLEAN MODULES - TOÁN CÔ TRÀ ĐÃ KHỞI CHẠY!\n")
+	fmt.Printf("💻 Server đang lắng nghe tại địa chỉ: http://localhost:%s\n", cfg.Port)
+	fmt.Printf("🎯 Bạn có thể click trực tiếp link trên để trải nghiệm giao diện Live Demo\n")
+	fmt.Printf("   tích hợp 5 Phân Hệ động: Trang Chủ, Giới Thiệu, Vinh Danh, Sales & Admin!\n")
+	fmt.Printf("===========================================================\n\n")
+
+	// Fallback to start a dummy DB check to preserve previous DB loading prints
+	_, _ = database.NewPostgresConnection(cfg.DatabaseURL)
+	fmt.Printf("[INFO] Trạng thái: database_mock.json đã sẵn sàng tự động đồng bộ hóa an toàn.\n")
+
+	err := http.ListenAndServe(":"+cfg.Port, nil)
+	if err != nil {
+		log.Error("Lỗi nghiêm trọng khi khởi động server", err)
+	}
+}
+
+// Giao diện Premium SPA tích hợp 5 phân hệ
+const htmlPlayground = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Toán Cô Trà - Hệ Thống Đào Tạo Toán Tư Duy Liên Cấp</title>
+    <!-- Nhập các phông chữ chất lượng cao tiếng Việt không lỗi font -->
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Thẩm mỹ thiết kế sang trọng, phông màu trắng tuyết Snowy White làm chủ đạo cùng các nét vàng ấm và ngọc lục bảo */
+        :root {
+            --bg-snowy: #F7F9FC;
+            --white: #FFFFFF;
+            --accent-amber: #FFB800;
+            --accent-green: #10B981;
+            --text-dark: #1E293B;
+            --text-muted: #64748B;
+            --primary-shadow: 0 10px 30px rgba(30, 41, 59, 0.05);
+            --glass-border: 1px solid rgba(226, 232, 240, 0.8);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            /* Reset CSS toàn cục để đảm bảo tất cả các nút Submit, input đều kế thừa đúng Font chữ không lỗi */
+            font-family: 'Be Vietnam Pro', 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            background-color: var(--bg-snowy);
+            color: var(--text-dark);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* Thanh điều hướng Premium */
+        header {
+            background-color: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-bottom: var(--glass-border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            padding: 15px 30px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+        }
+
+        .header-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .brand-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--text-dark);
+        }
+
+        .logo-circle {
+            background: linear-gradient(135deg, var(--accent-amber), #FFA000);
+            width: 42px;
+            height: 42px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--white);
+            font-weight: 700;
+            font-size: 20px;
+            box-shadow: 0 4px 10px rgba(255, 184, 0, 0.3);
+        }
+
+        .brand-name h1 {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: var(--text-dark);
+        }
+
+        .brand-name p {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 8px;
+            list-style: none;
+        }
+
+        .nav-links button {
+            background: none;
+            border: none;
+            padding: 10px 18px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .nav-links button:hover {
+            color: var(--text-dark);
+            background-color: rgba(0, 0, 0, 0.02);
+        }
+
+        .nav-links button.active {
+            color: var(--white);
+            background-gradient: linear-gradient(135deg, var(--text-dark), #0F172A);
+            background-color: var(--text-dark);
+            box-shadow: 0 4px 12px rgba(30, 41, 59, 0.25);
+        }
+
+        /* Vùng hiển thị nội dung chính */
+        main {
+            flex: 1;
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 30px 15px;
+        }
+
+        /* CSS Phân trang hiển thị */
+        .tab-panel {
+            display: none;
+            animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ---------------------------------------------------- */
+        /* TAB 1: TRANG CHỦ (HOMEPAGE & BILLBOARD) */
+        /* ---------------------------------------------------- */
+        
+        .welcome-billboard {
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 24px;
+            padding: 40px;
+            box-shadow: var(--primary-shadow);
+            margin-bottom: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 40px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .billboard-content {
+            flex: 1.2;
+            z-index: 2;
+        }
+
+        .billboard-badge {
+            background-color: rgba(255, 184, 0, 0.1);
+            color: #D97706;
+            padding: 6px 16px;
+            border-radius: 50px;
+            font-size: 12px;
+            font-weight: 700;
+            display: inline-block;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+        }
+
+        .billboard-content h2 {
+            font-size: 36px;
+            font-weight: 800;
+            line-height: 1.2;
+            color: var(--text-dark);
+            margin-bottom: 16px;
+            letter-spacing: -1px;
+        }
+
+        .billboard-content p {
+            font-size: 15px;
+            line-height: 1.6;
+            color: var(--text-muted);
+            margin-bottom: 24px;
+        }
+
+        .billboard-features {
+            display: flex;
+            gap: 15px;
+        }
+
+        .feat-item {
+            background: var(--bg-snowy);
+            padding: 12px 20px;
+            border-radius: 12px;
+            border: var(--glass-border);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .billboard-image-container {
+            flex: 0.8;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2;
+        }
+
+        .image-starry-frame {
+            position: relative;
+            width: 250px;
+            height: 250px;
+            border-radius: 50%;
+            border: 4px solid var(--accent-amber);
+            box-shadow: 0 10px 40px rgba(255, 184, 0, 0.2);
+            overflow: hidden;
+            transition: transform 0.4s ease;
+            cursor: pointer;
+        }
+
+        .image-starry-frame:hover {
+            transform: scale(1.03) rotate(3deg);
+        }
+
+        .image-starry-frame img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .tag-hybrid {
+            position: absolute;
+            background-color: var(--text-dark);
+            color: var(--white);
+            font-size: 11px;
+            font-weight: 700;
+            padding: 6px 14px;
+            border-radius: 50px;
+            bottom: 10px;
+            right: 0;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            text-transform: uppercase;
+        }
+
+        /* Lớp học động & Giá cả */
+        .classes-section-title {
+            text-align: center;
+            font-size: 24px;
+            font-weight: 800;
+            margin-bottom: 30px;
+            color: var(--text-dark);
+            letter-spacing: -0.5px;
+        }
+
+        .classes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 25px;
+            margin-bottom: 50px;
+        }
+
+        .class-card {
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: var(--primary-shadow);
+            position: relative;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .class-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(30, 41, 59, 0.08);
+        }
+
+        .class-card.popular {
+            border: 2px solid var(--accent-amber);
+        }
+
+        .popular-badge {
+            position: absolute;
+            top: -12px;
+            right: 25px;
+            background-color: var(--accent-amber);
+            color: var(--text-dark);
+            font-size: 10px;
+            font-weight: 800;
+            padding: 4px 12px;
+            border-radius: 50px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .class-header h3 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-dark);
+            margin-bottom: 10px;
+            line-height: 1.3;
+        }
+
+        .class-desc {
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.5;
+            margin-bottom: 20px;
+        }
+
+        .class-footer {
+            border-top: 1px solid #F1F5F9;
+            padding-top: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .price-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .price-value {
+            font-size: 18px;
+            font-weight: 800;
+            color: var(--accent-green);
+        }
+
+        /* Biểu mẫu điền đăng ký (Form) */
+        .register-box {
+            max-width: 600px;
+            margin: 0 auto;
+            background: var(--white);
+            border: var(--glass-border);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.03);
+            border-radius: 24px;
+            padding: 40px;
+        }
+
+        .register-title {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .register-title h3 {
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+
+        .register-title p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-dark);
+            margin-bottom: 8px;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 18px;
+            font-size: 14px;
+            border-radius: 12px;
+            border: var(--glass-border);
+            background-color: var(--bg-snowy);
+            transition: all 0.3s ease;
+            outline: none;
+        }
+
+        .form-control:focus {
+            background-color: var(--white);
+            border-color: var(--accent-amber);
+            box-shadow: 0 0 0 4px rgba(255, 184, 0, 0.1);
+        }
+
+        .selector-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
+        }
+
+        .select-btn {
+            background-color: var(--bg-snowy);
+            border: var(--glass-border);
+            padding: 10px 5px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 700;
+            transition: all 0.2s ease;
+            text-align: center;
+        }
+
+        .select-btn.active {
+            background-color: var(--accent-amber);
+            border-color: var(--accent-amber);
+            color: var(--text-dark);
+            box-shadow: 0 4px 10px rgba(255, 184, 0, 0.2);
+        }
+
+        .segment-control {
+            display: flex;
+            background-color: var(--bg-snowy);
+            padding: 4px;
+            border-radius: 12px;
+            border: var(--glass-border);
+        }
+
+        .segment-btn {
+            flex: 1;
+            padding: 10px;
+            font-size: 13px;
+            font-weight: 700;
+            text-align: center;
+            border-radius: 8px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            color: var(--text-muted);
+            transition: all 0.2s ease;
+        }
+
+        .segment-btn.active {
+            background-color: var(--white);
+            color: var(--text-dark);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+
+        .btn-submit {
+            width: 100%;
+            background-gradient: linear-gradient(135deg, var(--text-dark), #0F172A);
+            background-color: var(--text-dark);
+            color: var(--white);
+            padding: 15px;
+            border: none;
+            border-radius: 14px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 15px;
+            box-shadow: 0 4px 15px rgba(30, 41, 59, 0.2);
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(30, 41, 59, 0.3);
+        }
+
+        /* ---------------------------------------------------- */
+        /* TAB 2: GIỚI THIỆU (ABOUT US) */
+        /* ---------------------------------------------------- */
+        
+        .cotra-bio-section {
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 24px;
+            padding: 40px;
+            box-shadow: var(--primary-shadow);
+            margin-bottom: 40px;
+            display: flex;
+            gap: 40px;
+            align-items: flex-start;
+        }
+
+        .bio-avatar {
+            flex: 0.8;
+            max-width: 300px;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+            border: var(--glass-border);
+        }
+
+        .bio-avatar img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .bio-info {
+            flex: 1.2;
+        }
+
+        .bio-info h2 {
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 5px;
+        }
+
+        .bio-info h4 {
+            font-size: 14px;
+            color: var(--accent-amber);
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+        }
+
+        .bio-text {
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-dark);
+            margin-bottom: 20px;
+            white-space: pre-line;
+        }
+
+        .teachers-section-title {
+            text-align: center;
+            font-size: 22px;
+            font-weight: 800;
+            margin-bottom: 25px;
+            color: var(--text-dark);
+        }
+
+        .teachers-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+        }
+
+        .teacher-card {
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: var(--primary-shadow);
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .teacher-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 30px rgba(0,0,0,0.06);
+        }
+
+        .teacher-avatar-circle {
+            width: 90px;
+            height: 90px;
+            border-radius: 50%;
+            background-color: var(--bg-snowy);
+            margin: 0 auto 15px auto;
+            border: 2px solid #E2E8F0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .teacher-avatar-circle img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .teacher-card h3 {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .teacher-card h5 {
+            font-size: 12px;
+            color: var(--accent-amber);
+            font-weight: 700;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+        }
+
+        .teacher-edu {
+            font-size: 11px;
+            background-color: var(--bg-snowy);
+            color: var(--text-muted);
+            padding: 4px 10px;
+            border-radius: 6px;
+            display: inline-block;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        .teacher-bio {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        /* ---------------------------------------------------- */
+        /* TAB 3: VINH DANH (HONOR STUDENT HALL OF FAME) */
+        /* ---------------------------------------------------- */
+        
+        .honor-billboard {
+            background: linear-gradient(135deg, #1E293B, #0F172A);
+            color: var(--white);
+            border-radius: 24px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 40px;
+            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.15);
+        }
+
+        .honor-billboard h2 {
+            font-size: 30px;
+            font-weight: 800;
+            margin-bottom: 10px;
+            letter-spacing: -1px;
+        }
+
+        .honor-billboard p {
+            color: #94A3B8;
+            font-size: 14px;
+        }
+
+        .students-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+        }
+
+        .student-card {
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: var(--primary-shadow);
+            text-align: center;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .student-card:hover {
+            transform: translateY(-4px);
+        }
+
+        .student-badge-crown {
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: var(--accent-amber);
+            color: var(--text-dark);
+            font-size: 9px;
+            font-weight: 800;
+            padding: 3px 10px;
+            border-radius: 30px;
+            text-transform: uppercase;
+        }
+
+        .student-avatar {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            margin: 10px auto 15px auto;
+            border: 3px solid #E2E8F0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .student-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .student-card h3 {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .student-class {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+
+        .student-achievement {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--accent-green);
+            line-height: 1.4;
+            padding: 8px 12px;
+            background-color: rgba(16, 185, 129, 0.05);
+            border-radius: 10px;
+            margin-top: 10px;
+        }
+
+        /* ---------------------------------------------------- */
+        /* TAB 4: QUẢN TRỊ SALES */
+        /* ---------------------------------------------------- */
+        
+        .sales-monitor-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 25px;
+        }
+
+        .sales-portal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 16px;
+            padding: 20px 30px;
+            box-shadow: var(--primary-shadow);
+        }
+
+        .user-badge {
+            background-color: rgba(30, 41, 59, 0.05);
+            padding: 6px 14px;
+            border-radius: 50px;
+            font-size: 12px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-logout {
+            background-color: #EF4444;
+            color: var(--white);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .btn-logout:hover {
+            opacity: 0.9;
+        }
+
+        .leads-list {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .lead-card {
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 16px;
+            padding: 20px 25px;
+            box-shadow: var(--primary-shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.3s ease;
+        }
+
+        .lead-card.contacted {
+            background-color: rgba(16, 185, 129, 0.03);
+            border-color: rgba(16, 185, 129, 0.2);
+        }
+
+        .lead-info-left h4 {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .lead-meta {
+            display: flex;
+            gap: 10px;
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .lead-meta span {
+            background-color: var(--bg-snowy);
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+
+        .lead-actions-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        /* Nút toggle kiểu iOS */
+        .ios-toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .ios-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            background-color: #CBD5E1;
+            border-radius: 100px;
+            transition: background-color 0.3s;
+        }
+
+        .ios-switch::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 20px;
+            height: 20px;
+            background-color: var(--white);
+            border-radius: 50%;
+            transition: transform 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .ios-toggle-container.active .ios-switch {
+            background-color: var(--accent-green);
+        }
+
+        .ios-toggle-container.active .ios-switch::after {
+            transform: translateX(24px);
+        }
+
+        .lead-badge-done {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--accent-green);
+            padding: 4px 10px;
+            border-radius: 50px;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        /* ---------------------------------------------------- */
+        /* TAB 5: DASHBOARD ADMIN */
+        /* ---------------------------------------------------- */
+        
+        .admin-dashboard-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 30px;
+        }
+
+        .admin-widgets {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+        }
+
+        .widget-card {
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 16px;
+            padding: 20px 25px;
+            box-shadow: var(--primary-shadow);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .widget-title {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .widget-value {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--text-dark);
+        }
+
+        .admin-editor-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+        }
+
+        @media (max-width: 900px) {
+            .admin-editor-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .editor-card {
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: var(--primary-shadow);
+        }
+
+        .editor-card h3 {
+            font-size: 18px;
+            font-weight: 800;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--bg-snowy);
+            padding-bottom: 10px;
+        }
+
+        .class-price-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .class-price-row span {
+            font-size: 13px;
+            font-weight: 600;
+            flex: 1.2;
+        }
+
+        .class-price-row input {
+            flex: 0.8;
+        }
+
+        .btn-action-small {
+            background-color: var(--text-dark);
+            color: var(--white);
+            border: none;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-action-small:hover {
+            opacity: 0.9;
+        }
+
+        .admin-list-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .admin-list-table th, .admin-list-table td {
+            padding: 10px 12px;
+            text-align: left;
+            font-size: 12px;
+            border-bottom: 1px solid #F1F5F9;
+        }
+
+        .admin-list-table th {
+            font-weight: 700;
+            color: var(--text-muted);
+            background-color: var(--bg-snowy);
+        }
+
+        .admin-list-table td {
+            font-weight: 500;
+        }
+
+        .btn-delete-small {
+            background-color: #EF4444;
+            color: var(--white);
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        /* Khung đăng nhập tập trung */
+        .login-overlay-container {
+            max-width: 400px;
+            margin: 60px auto;
+            background: var(--white);
+            border: var(--glass-border);
+            border-radius: 24px;
+            padding: 40px;
+            box-shadow: var(--primary-shadow);
+        }
+
+        .login-overlay-container h3 {
+            text-align: center;
+            font-size: 22px;
+            font-weight: 800;
+            margin-bottom: 20px;
+        }
+
+        /* ---------------------------------------------------- */
+        /* CHATBOT DIALOG SIMULATION (WIDGET GÓC DƯỚI) */
+        /* ---------------------------------------------------- */
+        
+        .chatbot-widget {
+            position: fixed;
+            bottom: 25px;
+            right: 25px;
+            z-index: 1000;
+        }
+
+        .chatbot-btn {
+            background-color: var(--accent-amber);
+            width: 55px;
+            height: 55px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dark);
+            font-size: 24px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 6px 20px rgba(255, 184, 0, 0.4);
+            transition: all 0.3s;
+        }
+
+        .chatbot-btn:hover {
+            transform: scale(1.08);
+        }
+
+        .chatbot-window {
+            position: absolute;
+            bottom: 70px;
+            right: 0;
+            width: 320px;
+            background-color: var(--white);
+            border: var(--glass-border);
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chatbot-window.active {
+            display: flex;
+        }
+
+        .chat-header {
+            background-color: var(--text-dark);
+            color: var(--white);
+            padding: 12px 15px;
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .chat-messages {
+            height: 220px;
+            padding: 15px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background-color: var(--bg-snowy);
+        }
+
+        .chat-msg {
+            max-width: 80%;
+            padding: 8px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .chat-msg.bot {
+            background-color: var(--white);
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+
+        .chat-msg.user {
+            background-color: var(--accent-amber);
+            color: var(--text-dark);
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+
+        .chat-input-area {
+            display: flex;
+            border-top: var(--glass-border);
+            padding: 8px;
+        }
+
+        .chat-input-area input {
+            flex: 1;
+            padding: 6px 12px;
+            font-size: 12px;
+            border: none;
+            outline: none;
+        }
+
+        .chat-send-btn {
+            background-color: var(--text-dark);
+            color: var(--white);
+            border: none;
+            padding: 4px 12px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        /* Footer */
+        footer {
+            background-color: var(--white);
+            border-top: var(--glass-border);
+            padding: 30px;
+            margin-top: 50px;
+        }
+
+        .footer-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 30px;
+        }
+
+        .footer-info {
+            max-width: 500px;
+        }
+
+        .footer-info h4 {
+            font-size: 15px;
+            font-weight: 800;
+            margin-bottom: 12px;
+        }
+
+        .footer-info p {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .footer-contacts {
+            font-size: 13px;
+            color: var(--text-dark);
+            font-weight: 600;
+        }
+
+        .footer-contacts p {
+            margin-bottom: 8px;
+        }
+
+        /* Tối ưu giao diện di động hoàn hảo */
+        @media (max-width: 768px) {
+            /* 1. Header Navigation */
+            .header-container {
+                flex-direction: column;
+                gap: 15px;
+                padding: 10px 0;
+            }
+            .nav-links {
+                width: 100%;
+                justify-content: flex-start;
+                overflow-x: auto;
+                padding-bottom: 8px;
+                white-space: nowrap;
+                -webkit-overflow-scrolling: touch;
+            }
+            .nav-links button {
+                padding: 8px 14px;
+                font-size: 13px;
+                flex-shrink: 0;
+            }
+            
+            /* 2. Welcome Billboard */
+            .welcome-billboard {
+                flex-direction: column;
+                padding: 25px;
+                gap: 25px;
+                text-align: center;
+            }
+            .billboard-content h2 {
+                font-size: 26px;
+                letter-spacing: -0.5px;
+            }
+            .billboard-features {
+                flex-direction: column;
+                align-items: center;
+                gap: 10px;
+            }
+            .billboard-image-container {
+                width: 100%;
+            }
+            .image-starry-frame {
+                width: 180px;
+                height: 180px;
+            }
+
+            /* 3. Lưới lớp học & Giáo viên */
+            .classes-grid, .teachers-grid, .students-grid {
+                grid-template-columns: 1fr !important;
+                gap: 20px;
+            }
+
+            /* 4. Form Đăng ký */
+            .register-box {
+                padding: 25px 20px;
+            }
+            .selector-grid {
+                grid-template-columns: repeat(3, 1fr) !important;
+                gap: 8px;
+            }
+            .segment-control {
+                flex-direction: column;
+                gap: 5px;
+                padding: 6px;
+            }
+            .segment-btn {
+                padding: 8px;
+                font-size: 12px;
+            }
+
+            /* 5. Giới thiệu & Vinh danh */
+            .cotra-bio-section {
+                flex-direction: column;
+                padding: 25px;
+                gap: 25px;
+                align-items: center;
+                text-align: center;
+            }
+            .bio-avatar {
+                max-width: 200px;
+            }
+
+            /* 6. Admin & Sales Monitor */
+            .sales-portal-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+                padding: 20px;
+            }
+            .lead-card {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+            }
+            .lead-actions-right {
+                width: 100%;
+                justify-content: space-between;
+                border-top: 1px solid #F1F5F9;
+                padding-top: 12px;
+            }
+            .admin-editor-grid {
+                grid-template-columns: 1fr !important;
+            }
+            .editor-card {
+                padding: 20px;
+                grid-column: span 1 !important;
+            }
+            .admin-list-table {
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+            }
+            
+            /* 7. Footer */
+            .footer-container {
+                flex-direction: column;
+                gap: 20px;
+                text-align: center;
+            }
+            .footer-info, .footer-contacts {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header>
+        <div class="header-container">
+            <a href="#" class="brand-logo" onclick="switchTab('tab-homepage')">
+                <div class="logo-circle">Ω</div>
+                <div class="brand-name">
+                    <h1>TOÁN CÔ TRÀ</h1>
+                    <p>Rèn Luyện Tư Duy Liên Cấp</p>
+                </div>
+            </a>
+            <ul class="nav-links">
+                <li><button id="btn-homepage" class="active" onclick="switchTab('tab-homepage')">Trang Chủ</button></li>
+                <li><button id="btn-about" onclick="switchTab('tab-about')">Giới Thiệu</button></li>
+                <li><button id="btn-honor" onclick="switchTab('tab-honor')">Vinh Danh</button></li>
+                <li id="li-sales-dashboard" style="display: none;"><button id="btn-sales" onclick="switchTab('tab-sales')">Quản Trị Sales</button></li>
+                <li id="li-admin-dashboard" style="display: none;"><button id="btn-admin" onclick="switchTab('tab-admin')">Bảng Admin</button></li>
+                <li id="li-login"><button id="btn-login" onclick="openLoginModal()" style="background: rgba(16, 185, 129, 0.1); color: var(--accent-green); border: var(--glass-border); padding: 8px 16px; border-radius: 20px; font-weight: 600; cursor: pointer;">Đăng Nhập</button></li>
+                <li id="li-user-info" style="display: none; align-items: center; gap: 10px;">
+                    <span id="nav-username-badge" class="user-badge" style="font-weight: 600; font-size: 13px;"></span>
+                    <button onclick="handleLogout()" class="btn-logout" style="padding: 6px 12px; font-size: 12px; background: rgba(239, 68, 68, 0.1); color: #EF4444; border: none; border-radius: 8px; cursor: pointer;">Đăng Xuất</button>
+                </li>
+            </ul>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main>
+
+        <!-- ---------------------------------------------------- -->
+        <!-- TAB 1: TRANG CHỦ -->
+        <!-- ---------------------------------------------------- -->
+        <div id="tab-homepage" class="tab-panel active">
+            
+            <div class="welcome-billboard">
+                <div class="billboard-content">
+                    <div class="billboard-badge">🚀 Hệ Thống Đào Tạo Hybrid 4.0</div>
+                    <h2>Ươm Mầm Tình Yêu Toán Học - Khơi Dậy Tiềm Năng Tư Duy</h2>
+                    <p>Toán Cô Trà là môi trường rèn luyện kỹ năng giải toán, bứt phá tư duy logic sắc bén, giúp các con vững chắc nền tảng, bám sát trường điểm và đạt kết quả vượt bậc trong các kỳ thi chuyển cấp.</p>
+                    <div class="billboard-features">
+                        <div class="feat-item">✓ Vững chắc nền tảng</div>
+                        <div class="feat-item">✓ Luyện thi chuyên hiệu quả</div>
+                        <div class="feat-item">✓ Sát sao đồng hành mọi lúc</div>
+                    </div>
+                </div>
+                <div class="billboard-image-container">
+                    <div class="image-starry-frame">
+                        <img src="/assets/cotra.jpg" alt="Chân dung Cô Trà">
+                        <div class="tag-hybrid">Hybrid Learning</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="classes-section-title">Chương Trình Đào Tạo Mũi Nhọn</div>
+            <div id="homepage-classes-grid" class="classes-grid">
+                <!-- Tải động các lớp học từ API -->
+            </div>
+
+            <!-- Form đăng ký học thử -->
+            <div class="register-box">
+                <div class="register-title">
+                    <h3>Đăng Ký Khảo Sát & Tư Vấn Học Thử Miễn Phí</h3>
+                    <p>Hãy dành 1 phút điền thông tin để Cô Trà trực tiếp liên hệ và gửi lộ trình phù hợp cho con</p>
+                </div>
+                <form id="lead-register-form">
+                    <div class="form-group">
+                        <label for="reg-parent">Họ tên Phụ huynh</label>
+                        <input type="text" id="reg-parent" class="form-control" placeholder="Ví dụ: Nguyễn Lan" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-phone">Số điện thoại liên lạc (Zalo)</label>
+                        <input type="text" id="reg-phone" class="form-control" placeholder="Ví dụ: 0983459912" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-student">Họ tên Học sinh</label>
+                        <input type="text" id="reg-student" class="form-control" placeholder="Ví dụ: Nguyễn Đức" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Khối lớp của con</label>
+                        <div class="selector-grid" id="grade-selector">
+                            <div class="select-btn" onclick="selectGrade(1)">Lớp 1</div>
+                            <div class="select-btn" onclick="selectGrade(2)">Lớp 2</div>
+                            <div class="select-btn" onclick="selectGrade(3)">Lớp 3</div>
+                            <div class="select-btn" onclick="selectGrade(4)">Lớp 4</div>
+                            <div class="select-btn active" onclick="selectGrade(5)">Lớp 5</div>
+                            <div class="select-btn" onclick="selectGrade(6)">Lớp 6</div>
+                            <div class="select-btn" onclick="selectGrade(7)">Lớp 7</div>
+                            <div class="select-btn" onclick="selectGrade(8)">Lớp 8</div>
+                            <div class="select-btn" onclick="selectGrade(9)">Lớp 9</div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Học lực hiện tại của con</label>
+                        <div class="segment-control">
+                            <button type="button" id="perf-average" class="segment-btn" onclick="selectPerformance('average')">Trung bình</button>
+                            <button type="button" id="perf-good" class="segment-btn active" onclick="selectPerformance('good')">Khá</button>
+                            <button type="button" id="perf-excellent" class="segment-btn" onclick="selectPerformance('excellent')">Giỏi / Xuất sắc</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Hình thức học mong muốn</label>
+                        <div class="segment-control">
+                            <button type="button" id="model-online" class="segment-btn active" onclick="selectModel('online')">💻 Học Online Tương Tác</button>
+                            <button type="button" id="model-offline" class="segment-btn" onclick="selectModel('offline')">🏫 Học Offline Tại Lớp</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Hệ đào tạo</label>
+                        <div class="segment-control">
+                            <button type="button" id="type-basic" class="segment-btn active" onclick="selectType('basic')">Lớp Cơ Bản</button>
+                            <button type="button" id="type-advanced" class="segment-btn" onclick="selectType('advanced')">Lớp Nâng Cao</button>
+                            <button type="button" id="type-hq" class="segment-btn" onclick="selectType('high_quality')">Chất Lượng Cao Lớp 5</button>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn-submit">Đăng Ký Tư Vấn Học Thử</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- ---------------------------------------------------- -->
+        <!-- TAB 2: GIỚI THIỆU -->
+        <!-- ---------------------------------------------------- -->
+        <div id="tab-about" class="tab-panel">
+            <div class="cotra-bio-section">
+                <div class="bio-avatar">
+                    <img id="about-cotra-img" src="/assets/cotra.jpg" alt="Cô Trà Sáng Lập">
+                </div>
+                <div class="bio-info">
+                    <h2>Giới Thiệu Cô Trà Sáng Lập</h2>
+                    <h4 id="about-cotra-role">Người khơi nguồn tình yêu Toán học</h4>
+                    <p id="about-cotra-bio" class="bio-text">
+                        Đang tải thông tin tiểu sử...
+                    </p>
+                </div>
+            </div>
+
+            <div class="teachers-section-title">Đội Ngũ Đồng Nghiệp Sát Sao Nhiệt Tình</div>
+            <div id="about-teachers-grid" class="teachers-grid">
+                <!-- Tải động đồng nghiệp từ API -->
+            </div>
+        </div>
+
+        <!-- ---------------------------------------------------- -->
+        <!-- TAB 3: VINH DANH HỌC SINH -->
+        <!-- ---------------------------------------------------- -->
+        <div id="tab-honor" class="tab-panel">
+            <div class="honor-billboard">
+                <h2>Bảng Vàng Tuyên Dương Thành Tích Xuất Sắc</h2>
+                <p>Nơi tôn vinh các con học sinh ưu tú đã bứt phá tư duy và gặt hái kết quả rực rỡ tại các trường chuyên lớp điểm Hà Nội</p>
+            </div>
+            
+            <div id="honor-students-grid" class="students-grid">
+                <!-- Tải động danh sách vinh danh -->
+            </div>
+        </div>
+
+        <!-- ---------------------------------------------------- -->
+        <!-- TAB 4: QUẢN TRỊ SALES -->
+        <!-- ---------------------------------------------------- -->
+        <div id="tab-sales" class="tab-panel">
+            <!-- Nếu chưa đăng nhập, hiển thị form login -->
+            <!-- Lock screen if not logged in -->
+            <div id="sales-login-section" class="login-overlay-container" style="text-align: center; padding: 40px 20px;">
+                <div style="font-size: 48px; margin-bottom: 15px;">🔒</div>
+                <h3>Yêu Cầu Đăng Nhập Hệ Thống</h3>
+                <p style="color: var(--text-muted); margin-bottom: 20px; max-width: 400px; margin-left: auto; margin-right: auto;">Vui lòng đăng nhập bằng tài khoản Sales hoặc Giáo Viên của bạn để sử dụng phân hệ này.</p>
+                <button onclick="openLoginModal()" class="btn-submit" style="width: auto; padding: 10px 25px;">Đăng Nhập Ngay</button>
+            </div>
+
+            <!-- Nếu đã đăng nhập, hiển thị màn hình Sales -->
+            <div id="sales-monitor" class="sales-monitor-container" style="display: none;">
+                <div class="sales-portal-header">
+                    <div>
+                        <h2>Màn Hình Quản Trị Sales & Lịch Hẹn</h2>
+                        <p style="font-size: 12px; color: var(--text-muted);">Lead được cập nhật tự động thời gian thực qua Server-Sent Events (SSE)</p>
+                    </div>
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <div id="sales-active-user" class="user-badge">Đang kết nối...</div>
+                        <button class="btn-logout" onclick="logoutSession('sales')">Đăng xuất</button>
+                    </div>
+                </div>
+
+                <div class="leads-list" id="sales-leads-list">
+                    <!-- Danh sách Lead đăng ký học thử -->
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------------------------------------------------- -->
+        <!-- TAB 5: BẢNG ĐIỀU KHIỂN ADMIN -->
+        <!-- ---------------------------------------------------- -->
+        <div id="tab-admin" class="tab-panel">
+            <!-- Nếu chưa đăng nhập Admin, hiển thị form login -->
+            <!-- Lock screen if not logged in -->
+            <div id="admin-login-section" class="login-overlay-container" style="text-align: center; padding: 40px 20px;">
+                <div style="font-size: 48px; margin-bottom: 15px;">🛡️</div>
+                <h3>Yêu Cầu Quyền Quản Trị Viên</h3>
+                <p style="color: var(--text-muted); margin-bottom: 20px; max-width: 400px; margin-left: auto; margin-right: auto;">Mục này chỉ dành cho Admin tối cao của Toán Cô Trà. Vui lòng đăng nhập tài khoản Admin của bạn.</p>
+                <button onclick="openLoginModal()" class="btn-submit" style="width: auto; padding: 10px 25px;">Đăng Nhập Quyền Admin</button>
+            </div>
+
+            <!-- Nếu đã đăng nhập Admin, hiển thị Bảng điều khiển Admin -->
+            <div id="admin-monitor" class="admin-dashboard-container" style="display: none;">
+                
+                <div class="sales-portal-header">
+                    <div>
+                        <h2>Bảng Điều Khiển Quản Trị Tối Cao (Admin)</h2>
+                        <p style="font-size: 12px; color: var(--text-muted);">Tùy chỉnh thông tin website động, cấu hình học phí, vinh danh và cấp tài khoản Sale</p>
+                    </div>
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <div id="admin-active-user" class="user-badge" style="background-color: rgba(255, 184, 0, 0.1); color: #B45309;">Admin tối cao</div>
+                        <button class="btn-logout" onclick="logoutSession('admin')">Đăng xuất</button>
+                    </div>
+                </div>
+
+                <!-- Thống kê widgets -->
+                <div class="admin-widgets" id="admin-widgets-list">
+                    <div class="widget-card">
+                        <div class="widget-title">Tổng Lead Học Thử</div>
+                        <div class="widget-value" id="wd-total">0</div>
+                    </div>
+                    <div class="widget-card">
+                        <div class="widget-title">Đã Tư Vấn (Chăm Sóc)</div>
+                        <div class="widget-value" id="wd-contacted" style="color: var(--accent-green);">0</div>
+                    </div>
+                    <div class="widget-card">
+                        <div class="widget-title">Chờ Tư Vấn</div>
+                        <div class="widget-value" id="wd-pending" style="color: #EF4444;">0</div>
+                    </div>
+                    <div class="widget-card">
+                        <div class="widget-title">Học Online / Offline</div>
+                        <div class="widget-value" id="wd-ratio">0% / 0%</div>
+                    </div>
+                </div>
+
+                <!-- Lưới tùy chỉnh dữ liệu động -->
+                <div class="admin-editor-grid">
+                    
+                    <!-- 1. Quản Lý Khóa Học & Chương Trình Mũi Nhọn -->
+                    <div class="editor-card" style="grid-column: span 2;">
+                        <h3>Quản Lý Danh Mục Khóa Học & Chương Trình Mũi Nhọn</h3>
+                        <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Thêm mới lớp học, cập nhật thông tin học phí, hình thức học, và đánh dấu Chương Trình Đào Tạo Mũi Nhọn hiển thị nổi bật ở Trang Chủ.</p>
+                        
+                        <div style="background-color: var(--bg-snowy); padding: 15px; border-radius: 12px; margin-bottom: 15px; border: var(--glass-border);">
+                            <h4 id="class-form-title" style="font-size: 14px; margin-bottom: 10px; font-weight: 600;">Thêm Lớp Học Mới</h4>
+                            <form id="admin-form-manage-class" style="margin-top: 10px;">
+                                <input type="hidden" id="class-edit-id" value="">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 10px;">
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Mã định danh lớp (ID)</label>
+                                        <input type="text" id="class-id-input" class="form-control" style="padding: 6px 10px; font-size: 12px;" placeholder="Ví dụ: class_4_adv" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Tên lớp học</label>
+                                        <input type="text" id="class-name-input" class="form-control" style="padding: 6px 10px; font-size: 12px;" placeholder="Toán Tư Duy Lớp 4 Nâng Cao" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Học phí niêm yết</label>
+                                        <input type="text" id="class-price-input" class="form-control" style="padding: 6px 10px; font-size: 12px;" placeholder="Ví dụ: 1.200.000đ/tháng" required>
+                                    </div>
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 10px;">
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Khối lớp (1-9)</label>
+                                        <input type="number" id="class-grade-input" class="form-control" style="padding: 6px 10px; font-size: 12px;" min="1" max="9" value="5" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Hình thức học</label>
+                                        <select id="class-model-input" class="form-control" style="padding: 6px 10px; font-size: 12px; height: 34px;">
+                                            <option value="online">Online (Trực tuyến)</option>
+                                            <option value="offline">Offline (Tại lớp)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Loại lớp</label>
+                                        <select id="class-type-input" class="form-control" style="padding: 6px 10px; font-size: 12px; height: 34px;">
+                                            <option value="basic">Cơ Bản (basic)</option>
+                                            <option value="advanced">Nâng Cao (advanced)</option>
+                                            <option value="high_quality">Chất Lượng Cao (high_quality)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0; display: flex; align-items: center; gap: 8px; padding-top: 15px;">
+                                        <input type="checkbox" id="class-popular-input" style="width: 18px; height: 18px; cursor: pointer;">
+                                        <label for="class-popular-input" style="font-size: 11px; font-weight: 600; cursor: pointer; color: var(--accent-green);">Chương trình Mũi nhọn</label>
+                                    </div>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="font-size: 11px;">Mô tả ngắn gọn lớp học</label>
+                                    <input type="text" id="class-desc-input" class="form-control" style="padding: 6px 10px; font-size: 12px;" placeholder="Mô tả tóm tắt khóa học..." required>
+                                </div>
+                                <div style="display: flex; gap: 10px;">
+                                    <button type="submit" id="btn-save-class" class="btn-action-small" style="padding: 8px 15px; background: var(--accent-green); color: white;">Lưu Lớp Học</button>
+                                    <button type="button" id="btn-cancel-class-edit" class="btn-action-small" style="padding: 8px 15px; background: var(--text-muted); color: white; display: none;" onclick="resetClassForm()">Hủy Sửa</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <h4 style="font-size: 14px; margin-bottom: 8px; font-weight: 600;">Danh Sách Lớp Học Hệ Thống</h4>
+                        <div style="max-height: 250px; overflow-y: auto; overflow-x: auto; border: var(--glass-border); border-radius: 8px; background: white;">
+                            <table class="admin-list-table" style="margin-top: 0; font-size: 12px;">
+                                <thead>
+                                    <tr>
+                                        <th>Mã Lớp</th>
+                                        <th>Tên Lớp</th>
+                                        <th>Khối</th>
+                                        <th>Hình Thức</th>
+                                        <th>Loại Lớp</th>
+                                        <th>Học Phí</th>
+                                        <th>Mũi Nhọn</th>
+                                        <th>Thao Tác</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-table-classes">
+                                    <!-- Load dong danh sach lop hoc -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 2. Quan ly Tai Khoan Sales / Tuyen Sinh -->
+                    <div class="editor-card" style="grid-column: span 2;">
+                        <h3>Quản Lý Tài Khoản Sales & Đội Ngũ Tuyển Sinh</h3>
+                        <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Cấp mới và thu hồi tài khoản chăm sóc phụ huynh cho nhân viên sales</p>
+                        
+                        <div style="background-color: var(--bg-snowy); padding: 15px; border-radius: 12px; margin-bottom: 15px; border: var(--glass-border);">
+                            <h4 style="font-size: 14px; margin-bottom: 10px; font-weight: 600;">Cấp Tài Khoản Mới</h4>
+                            <form id="admin-form-create-sales-user" style="display: flex; gap: 10px; align-items: flex-end;">
+                                <div class="form-group" style="margin-bottom: 0; flex: 1;">
+                                    <label style="font-size: 11px; margin-bottom: 3px;">Tên tài khoản</label>
+                                    <input type="text" id="new-sales-username" class="form-control" style="padding: 6px 10px; font-size: 12px;" placeholder="teacher2" required>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 0; flex: 1;">
+                                    <label style="font-size: 11px; margin-bottom: 3px;">Mật khẩu</label>
+                                    <input type="password" id="new-sales-password" class="form-control" style="padding: 6px 10px; font-size: 12px;" required>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 0; flex: 150px;">
+                                    <label style="font-size: 11px; margin-bottom: 3px;">Họ tên đầy đủ</label>
+                                    <input type="text" id="new-sales-fullname" class="form-control" style="padding: 6px 10px; font-size: 12px;" placeholder="Cô Minh Châu" required>
+                                </div>
+                                <button type="submit" class="btn-action-small" style="padding: 8px 15px; height: 34px; background: var(--accent-green); color: white;">Tạo Tài Khoản</button>
+                            </form>
+                        </div>
+
+                        <h4 style="font-size: 14px; margin-bottom: 8px; font-weight: 600;">Danh Sách Nhân Viên Sales Hiện Tại</h4>
+                        <div style="max-height: 200px; overflow-y: auto; overflow-x: auto; border: var(--glass-border); border-radius: 8px; background: white;">
+                            <table class="admin-list-table" style="margin-top: 0; font-size: 12px;">
+                                <thead>
+                                    <tr>
+                                        <th>Tên Tài Khoản</th>
+                                        <th>Họ & Tên</th>
+                                        <th>Vai Trò</th>
+                                        <th>Thao Tác</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-table-users">
+                                    <!-- Load dong danh sach users -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 3. Tùy chỉnh tiểu sử Cô Trà -->
+                    <div class="editor-card" style="grid-column: span 2;">
+                        <h3>Cập Nhật Tiểu Sử Cô Trà & Ảnh Đại Diện</h3>
+                        <form id="admin-form-cotra-bio">
+                            <div class="form-group">
+                                <label>Họ Tên & Danh Xưng</label>
+                                <input type="text" id="admin-cotra-name" class="form-control" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Chức Vụ</label>
+                                <input type="text" id="admin-cotra-role" class="form-control" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Nội Dung Tiểu Sử</label>
+                                <textarea id="admin-cotra-bio" class="form-control" rows="5" required style="resize: vertical;"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Tải Ảnh Đại Diện Lên (Cô Trà upload ảnh trực tiếp)</label>
+                                <div style="display: flex; gap: 20px; align-items: center;">
+                                    <input type="file" id="admin-cotra-avatar-file" class="form-control" accept="image/*">
+                                    <input type="hidden" id="admin-cotra-avatar-url">
+                                    <img id="admin-cotra-avatar-preview" src="/assets/cotra.jpg" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: var(--glass-border);">
+                                </div>
+                            </div>
+                            <button type="submit" class="btn-action-small" style="width: 100%; margin-top: 15px;">Lưu Thay Đổi Tiểu Sử Cô Trà</button>
+                        </form>
+                    </div>
+
+                    <!-- 3. Quan ly Doi Ngu Giao Vien & Cong Su -->
+                    <div class="editor-card" style="grid-column: span 2;">
+                        <h3>Quản Lý Đội Ngũ Giảng Viên & Cộng Sự (Trang Giới Thiệu)</h3>
+                        <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Thêm mới, chỉnh sửa thông tin tiểu sử và ảnh đại diện của giáo viên hiển thị trên trang Giới Thiệu</p>
+                        
+                        <div style="background-color: var(--bg-snowy); padding: 15px; border-radius: 12px; margin-bottom: 15px; border: var(--glass-border);">
+                            <h4 id="teacher-form-title" style="font-size: 14px; margin-bottom: 10px; font-weight: 600;">Thêm Mới Giảng Viên</h4>
+                            <form id="admin-form-manage-teacher" style="margin-top: 10px;">
+                                <input type="hidden" id="teacher-edit-id" value="">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 10px;">
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Họ tên giáo viên</label>
+                                        <input type="text" id="teacher-name" class="form-control" style="padding: 6px 10px; font-size: 12px;" placeholder="Cô Phạm Minh Châu" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Vai trò giảng dạy</label>
+                                        <input type="text" id="teacher-role" class="form-control" style="padding: 6px 10px; font-size: 12px;" placeholder="Giáo viên Toán tư duy" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Trình độ học vấn</label>
+                                        <input type="text" id="teacher-education" class="form-control" style="padding: 6px 10px; font-size: 12px;" placeholder="Cử nhân ĐH Sư Phạm Hà Nội" required>
+                                    </div>
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px;">
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Thứ tự hiển thị (Số nhỏ xếp trước)</label>
+                                        <input type="number" id="teacher-order" class="form-control" style="padding: 6px 10px; font-size: 12px; width: 100px;" value="5" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Tải Ảnh Giáo Viên Lên (Upload ảnh trực tiếp)</label>
+                                        <div style="display: flex; gap: 10px; align-items: center;">
+                                            <input type="file" id="teacher-avatar-file" class="form-control" style="padding: 4px; font-size: 11px;" accept="image/*">
+                                            <input type="hidden" id="teacher-avatar-url">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="font-size: 11px;">Tiểu sử giảng dạy tóm tắt</label>
+                                    <textarea id="teacher-bio" class="form-control" rows="3" style="padding: 8px; font-size: 12px; resize: vertical;" placeholder="Nhập kinh nghiệm, phương pháp giảng dạy..." required></textarea>
+                                </div>
+                                <div style="display: flex; gap: 10px;">
+                                    <button type="submit" id="btn-save-teacher" class="btn-action-small" style="padding: 8px 15px; background: var(--accent-green); color: white;">Lưu Giảng Viên</button>
+                                    <button type="button" id="btn-cancel-teacher-edit" class="btn-action-small" style="padding: 8px 15px; background: var(--text-muted); color: white; display: none;" onclick="resetTeacherForm()">Hủy Chỉnh Sửa</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <h4 style="font-size: 14px; margin-bottom: 8px; font-weight: 600;">Danh Sách Giảng Viên Trang Giới Thiệu</h4>
+                        <div style="max-height: 250px; overflow-y: auto; overflow-x: auto; border: var(--glass-border); border-radius: 8px; background: white;">
+                            <table class="admin-list-table" style="margin-top: 0; font-size: 12px;">
+                                <thead>
+                                    <tr>
+                                        <th>Ảnh</th>
+                                        <th>Họ & Tên</th>
+                                        <th>Vai Trò</th>
+                                        <th>Học Vấn</th>
+                                        <th>Thứ Tự</th>
+                                        <th>Thao Tác</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-table-teachers">
+                                    <!-- Load dong danh sach giao vien -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 4. Quản lý Học sinh Vinh danh -->
+                    <div class="editor-card" style="grid-column: span 2;">
+                        <h3>Quản Lý Danh Sách Vinh Danh Bảng Vàng</h3>
+                        
+                        <div style="background-color: var(--bg-snowy); padding: 20px; border-radius: 12px; margin-bottom: 25px; border: var(--glass-border);">
+                            <h4>Thêm Mới Học Sinh Vinh Danh</h4>
+                            <form id="admin-form-add-student" style="margin-top: 15px;">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div class="form-group" style="margin-bottom: 10px;">
+                                        <label>Họ tên học sinh</label>
+                                        <input type="text" id="new-stu-name" class="form-control" placeholder="Ví dụ: Lê Minh Trí" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 10px;">
+                                        <label>Lớp học tại trung tâm</label>
+                                        <input type="text" id="new-stu-class" class="form-control" placeholder="Ví dụ: Lớp 5 CLC" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 10px;">
+                                        <label>Niên khóa</label>
+                                        <input type="text" id="new-stu-year" class="form-control" placeholder="Ví dụ: 2024 - 2025" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 10px;">
+                                        <label>Ảnh học sinh (Upload ảnh trực tiếp)</label>
+                                        <div style="display: flex; gap: 10px; align-items: center;">
+                                            <input type="file" id="new-stu-avatar-file" class="form-control" accept="image/*">
+                                            <input type="hidden" id="new-stu-avatar-url">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="form-group" style="margin-top: 5px; margin-bottom: 15px;">
+                                    <label>Thành tích vinh danh</label>
+                                    <input type="text" id="new-stu-achievement" class="form-control" placeholder="Ví dụ: Thủ khoa môn Toán THCS chuyên Hà Nội - Amsterdam" required>
+                                </div>
+                                <button type="submit" class="btn-action-small" style="background-color: var(--accent-amber); color: var(--text-dark);">Đăng Lên Bảng Vàng</button>
+                            </form>
+                        </div>
+
+                        <h4>Danh Sách Học Sinh Vinh Danh Hiện Tại</h4>
+                        <div style="overflow-x: auto; max-width: 100%; border: var(--glass-border); border-radius: 8px; background: white;">
+                            <table class="admin-list-table" style="margin-top: 0;">
+                            <thead>
+                                <tr>
+                                    <th>Ảnh</th>
+                                    <th>Họ & Tên</th>
+                                    <th>Lớp Học</th>
+                                    <th>Niên Khóa</th>
+                                    <th>Thành Tích Tuyên Dương</th>
+                                    <th>Thao Tác</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-table-students">
+                                <!-- Load động danh sách học sinh kèm nút xóa -->
+                            </tbody>
+                        </table>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Unified Login Modal -->
+    <div id="login-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(30, 41, 59, 0.6); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(5px);">
+        <div style="background: var(--white); border-radius: 16px; padding: 30px; width: 400px; max-width: 95%; box-shadow: 0 20px 40px rgba(0,0,0,0.1); border: var(--glass-border); position: relative;">
+            <button onclick="closeLoginModal()" style="position: absolute; top: 15px; right: 15px; background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-muted);">&times;</button>
+            <h3 style="margin-bottom: 20px; text-align: center; color: var(--text-dark); font-weight: 700; font-size: 20px;">Đăng Nhập Hệ Thống</h3>
+            <form id="unified-login-form">
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-size: 13px; font-weight: 600;">Tên đăng nhập</label>
+                    <input type="text" id="login-username" class="form-control" placeholder="Ví dụ: teacher1, admin1" required style="width:100%; padding:10px; border-radius:8px; border: var(--glass-border);">
+                </div>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 5px; font-size: 13px; font-weight: 600;">Mật khẩu</label>
+                    <input type="password" id="login-password" class="form-control" placeholder="Mật khẩu" required style="width:100%; padding:10px; border-radius:8px; border: var(--glass-border);">
+                </div>
+                <button type="submit" class="btn-submit" style="width: 100%; padding: 12px; background: var(--accent-green); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer;">Đăng Nhập</button>
+            </form>
+        </div>
+    </div>
+
+
+
+    <!-- Footer Hệ Thống -->
+    <footer>
+        <div class="footer-container">
+            <div class="footer-info">
+                <h4>Hệ Thống Toán Tư Duy Cô Trà (TCT)</h4>
+                <p>Toán Cô Trà (TCT) là hệ thống rèn luyện Toán tư duy liên cấp, giúp các con: vững nền tảng, rèn tư duy sắc bén; luyện thi hiệu quả, bám sát mục tiêu; tự tin bứt phá chuyển cấp. Quan trọng nhất, ươm mầm tình yêu Toán học!</p>
+            </div>
+            <div class="footer-contacts">
+                <p>📞 Điện thoại: 098 345 93 93</p>
+                <p>📍 Địa chỉ: 41 phố Giang Biên, phường Giang Biên, quận Long Biên, Hà Nội</p>
+                <p style="font-size: 11px; color: var(--text-muted); margin-top: 15px;">© 2026 Toán Cô Trà (TCT). Bản quyền giao diện được bảo hộ hoàn toàn.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Script Javascript hoạt động SPA mượt mà -->
+    <script>
+        // Global State Variables
+        let currentGrade = 5;
+        let currentModel = 'online';
+        let currentClassType = 'basic';
+        let currentPerformance = 'good';
+        
+        // Unified Authentication State Variables
+        let authToken = localStorage.getItem('auth_token') || '';
+        let authUsername = localStorage.getItem('auth_username') || '';
+        let authRole = localStorage.getItem('auth_role') || '';
+        let authName = localStorage.getItem('auth_name') || '';
+
+        // Update navigation and login status on UI
+        function updateNavbarAuthUI() {
+            const liSales = document.getElementById('li-sales-dashboard');
+            const liAdmin = document.getElementById('li-admin-dashboard');
+            const liLogin = document.getElementById('li-login');
+            const liUser = document.getElementById('li-user-info');
+            const badge = document.getElementById('nav-username-badge');
+
+            if (authToken) {
+                liLogin.style.display = 'none';
+                liUser.style.display = 'flex';
+                badge.innerText = authName + ' (' + (authRole === 'admin' ? 'Admin' : 'Sales') + ')';
+                
+                if (authRole === 'admin') {
+                    liAdmin.style.display = 'inline-block';
+                    liSales.style.display = 'none';
+                } else if (authRole === 'teacher') {
+                    liSales.style.display = 'inline-block';
+                    liAdmin.style.display = 'none';
+                }
+            } else {
+                liLogin.style.display = 'inline-block';
+                liUser.style.display = 'none';
+                liSales.style.display = 'none';
+                liAdmin.style.display = 'none';
+            }
+        }
+
+        // SPA Navigation tabs switcher
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-panel').forEach(panel => {
+                panel.classList.remove('active');
+            });
+            document.querySelectorAll('.nav-links button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            document.getElementById(tabId).classList.add('active');
+            
+            // Map button active
+            if (tabId === 'tab-homepage') {
+                document.getElementById('btn-homepage').classList.add('active');
+                loadHomepageClasses();
+                selectGrade(currentGrade);
+            } else if (tabId === 'tab-about') {
+                document.getElementById('btn-about').classList.add('active');
+                loadAboutTeachers();
+            } else if (tabId === 'tab-honor') {
+                document.getElementById('btn-honor').classList.add('active');
+                loadHonorStudents();
+            } else if (tabId === 'tab-sales') {
+                document.getElementById('btn-sales').classList.add('active');
+                checkSalesAuth();
+            } else if (tabId === 'tab-admin') {
+                document.getElementById('btn-admin').classList.add('active');
+                checkAdminAuth();
+            }
+        }
+
+        // Open and close login modal
+        function openLoginModal() {
+            document.getElementById('login-modal').style.display = 'flex';
+        }
+
+        function closeLoginModal() {
+            document.getElementById('login-modal').style.display = 'none';
+            document.getElementById('unified-login-form').reset();
+        }
+
+        // Unified login form submission
+        document.getElementById('unified-login-form').onsubmit = function(e) {
+            e.preventDefault();
+            const user = document.getElementById('login-username').value.trim();
+            const pass = document.getElementById('login-password').value;
+
+            fetch('/api/v1/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: user, password: pass })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    authToken = result.data.token;
+                    authUsername = result.data.username;
+                    authRole = result.data.role;
+                    authName = result.data.name;
+
+                    localStorage.setItem('auth_token', authToken);
+                    localStorage.setItem('auth_username', authUsername);
+                    localStorage.setItem('auth_role', authRole);
+                    localStorage.setItem('auth_name', authName);
+
+                    updateNavbarAuthUI();
+                    closeLoginModal();
+
+                    // Navigate to appropriate tab based on role
+                    if (authRole === 'admin') {
+                        switchTab('tab-admin');
+                    } else if (authRole === 'teacher') {
+                        switchTab('tab-sales');
+                    }
+                } else {
+                    alert(result.error);
+                }
+            });
+        };
+
+        // Unified Logout
+        function handleLogout() {
+            if (eventSource) {
+                try { eventSource.close(); } catch(e) {}
+                eventSource = null;
+            }
+            sseConnected = false;
+
+            fetch('/api/v1/auth/logout', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            }).finally(() => {
+                authToken = '';
+                authUsername = '';
+                authRole = '';
+                authName = '';
+
+                localStorage.removeItem('auth_token');
+                localStorage.removeItem('auth_username');
+                localStorage.removeItem('auth_role');
+                localStorage.removeItem('auth_name');
+
+                updateNavbarAuthUI();
+                switchTab('tab-homepage');
+            });
+        }
+
+        // Dashboard authentications checks
+        function checkSalesAuth() {
+            if (authToken && (authRole === 'teacher' || authRole === 'admin')) {
+                document.getElementById('sales-login-section').style.display = 'none';
+                document.getElementById('sales-monitor').style.display = 'block';
+                document.getElementById('sales-active-user').innerText = '✓ Sales: ' + authName;
+                loadLeadsSalesPortal();
+                connectSSEStream();
+            } else {
+                document.getElementById('sales-login-section').style.display = 'block';
+                document.getElementById('sales-monitor').style.display = 'none';
+            }
+        }
+
+        // Admin Auth Check
+        function checkAdminAuth() {
+            if (authToken && authRole === 'admin') {
+                document.getElementById('admin-login-section').style.display = 'none';
+                document.getElementById('admin-monitor').style.display = 'block';
+                loadAdminDashboardData();
+            } else {
+                document.getElementById('admin-login-section').style.display = 'block';
+                document.getElementById('admin-monitor').style.display = 'none';
+            }
+        }
+
+        function logoutSession(portal) {
+            handleLogout();
+        }
+
+        // Selection helpers for home page registration
+        function selectGrade(grade) {
+            currentGrade = grade;
+            document.querySelectorAll('#grade-selector .select-btn').forEach((btn, idx) => {
+                btn.classList.toggle('active', (idx + 1) === grade);
+            });
+            
+            const hqBtn = document.getElementById('type-hq');
+            if (grade === 5) {
+                hqBtn.style.display = 'inline-block';
+            } else {
+                hqBtn.style.display = 'none';
+                if (currentClassType === 'high_quality') {
+                    selectType('basic');
+                }
+            }
+            checkClassTypeConstraints();
+        }
+
+        function selectModel(model) {
+            currentModel = model;
+            document.getElementById('model-online').classList.toggle('active', model === 'online');
+            document.getElementById('model-offline').classList.toggle('active', model === 'offline');
+        }
+
+        function selectType(type) {
+            currentClassType = type;
+            document.getElementById('type-basic').classList.toggle('active', type === 'basic');
+            document.getElementById('type-advanced').classList.toggle('active', type === 'advanced');
+            document.getElementById('type-hq').classList.toggle('active', type === 'high_quality');
+            checkClassTypeConstraints();
+        }
+
+        function checkClassTypeConstraints() {
+            if (currentClassType === 'high_quality' && currentGrade !== 5) {
+                selectType('basic');
+                alert('Chú ý: Lớp Chất Lượng Cao (CLC Ôn Luyện Chuyên) chỉ dành riêng cho khối Lớp 5. Hệ thống đã tự động đưa về lớp Cơ Bản.');
+            }
+        }
+
+        function selectPerformance(perf) {
+            currentPerformance = perf;
+            document.getElementById('perf-average').classList.toggle('active', perf === 'average');
+            document.getElementById('perf-good').classList.toggle('active', perf === 'good');
+            document.getElementById('perf-excellent').classList.toggle('active', perf === 'excellent');
+        }
+
+        // Load dynamic home page classes
+        function loadHomepageClasses() {
+            fetch('/api/v1/homepage/classes')
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        const grid = document.getElementById('homepage-classes-grid');
+                        grid.innerHTML = '';
+                        result.data.forEach(c => {
+                            if (!c.is_popular) return;
+                            const isPop = '<div class="popular-badge">Chương trình Mũi nhọn ★</div>';
+                            const popClass = 'popular';
+                            
+                            grid.innerHTML += '<div class="class-card ' + popClass + '">' + 
+                                isPop +
+                                '<div class="class-header">' +
+                                    '<h3>' + c.name + '</h3>' +
+                                    '<p class="class-desc">' + c.desc + '</p>' +
+                                '</div>' +
+                                '<div class="class-footer">' +
+                                    '<div class="price-label">Học phí niêm yết:</div>' +
+                                    '<div class="price-value">' + c.price + '</div>' +
+                                '</div>' +
+                            '</div>';
+                        });
+                    }
+                });
+        }
+
+        // Load About page teachers list
+        function loadAboutTeachers() {
+            fetch('/api/v1/about/teachers')
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        const cotra = result.data.find(t => t.id === 1);
+                        if (cotra) {
+                            document.getElementById('about-cotra-img').src = cotra.avatar || '/assets/cotra.jpg';
+                            document.getElementById('about-cotra-role').innerText = cotra.role;
+                            document.getElementById('about-cotra-bio').innerText = cotra.bio;
+                        }
+
+                        const colleagues = result.data.filter(t => t.id !== 1);
+                        const grid = document.getElementById('about-teachers-grid');
+                        grid.innerHTML = '';
+                        colleagues.forEach(t => {
+                            const avatar = t.avatar || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="90" height="90" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="%23E2E8F0"/><text x="50" y="55" font-family="sans-serif" font-size="24" text-anchor="middle" fill="%2364748B">' + t.name.charAt(0) + '</text></svg>';
+                            grid.innerHTML += '<div class="teacher-card">' +
+                                '<div class="teacher-avatar-circle">' +
+                                    '<img src="' + avatar + '" alt="' + t.name + '">' +
+                                '</div>' +
+                                '<h3>' + t.name + '</h3>' +
+                                '<h5>' + t.role + '</h5>' +
+                                '<div class="teacher-edu">' + t.education + '</div>' +
+                                '<p class="teacher-bio">' + t.bio + '</p>' +
+                            '</div>';
+                        });
+                    }
+                });
+        }
+
+        // Load Honor page students list
+        function loadHonorStudents() {
+            fetch('/api/v1/honor/students')
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        const grid = document.getElementById('honor-students-grid');
+                        grid.innerHTML = '';
+                        result.data.forEach(s => {
+                            const avatar = s.avatar || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="%23E2E8F0"/><text x="50" y="55" font-family="sans-serif" font-size="24" text-anchor="middle" fill="%2364748B">' + s.name.charAt(0) + '</text></svg>';
+                            grid.innerHTML += '<div class="student-card">' +
+                                '<div class="student-badge-crown">Tuyên Dương ✓</div>' +
+                                '<div class="student-avatar">' +
+                                    '<img src="' + avatar + '">' +
+                                '</div>' +
+                                '<h3>' + s.name + '</h3>' +
+                                '<div class="student-class">' + s.class + ' | ' + s.year + '</div>' +
+                                '<div class="student-achievement">' + s.achievement + '</div>' +
+                            '</div>';
+                        });
+                    }
+                });
+        }
+
+        // Submit study consultation registration form
+        document.getElementById('lead-register-form').onsubmit = function(e) {
+            e.preventDefault();
+            const parentName = document.getElementById('reg-parent').value;
+            const phone = document.getElementById('reg-phone').value;
+            const student = document.getElementById('reg-student').value;
+
+            fetch('/api/v1/registrations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    parent_name: parentName,
+                    phone_number: phone,
+                    student_name: student,
+                    grade: currentGrade,
+                    learning_model: currentModel,
+                    class_type: currentClassType,
+                    academic_performance: currentPerformance
+                })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert('Đăng ký tư vấn học thử thành công! Cô Trà và đội ngũ tuyển sinh sẽ sớm liên hệ trực tiếp với Phụ huynh.');
+                    document.getElementById('lead-register-form').reset();
+                    selectGrade(5);
+                    selectModel('online');
+                    selectType('basic');
+                    selectPerformance('good');
+                } else {
+                    alert('Lỗi đăng ký: ' + result.error);
+                }
+            });
+        };
+
+        // Load and render Leads on Sales Portal
+        function loadLeadsSalesPortal() {
+            if (!authToken) return;
+
+            fetch('/api/v1/registrations', {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            })
+            .then(res => {
+                if (res.status === 401 || res.status === 403) {
+                    const wasLoggedIn = !!authToken;
+                    handleLogout();
+                    if (wasLoggedIn) {
+                        alert('Phiên làm việc đã hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại.');
+                        openLoginModal();
+                    }
+                    throw new Error('Unauthorized');
+                }
+                return res.json();
+            })
+            .then(result => {
+                if (result.success) {
+                    renderLeads(result.data);
+                }
+            })
+            .catch(err => {
+                console.error('Error loading leads:', err);
+            });
+        }
+
+        function renderLeads(leads) {
+            const container = document.getElementById('sales-leads-list');
+            container.innerHTML = '';
+            
+            if (leads.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 30px;">Hiện tại chưa có lượt đăng ký tư vấn học thử nào.</div>';
+                return;
+            }
+
+            leads.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+
+            leads.forEach(l => {
+                const isContacted = l.status === 'contacted';
+                const contactedClass = isContacted ? 'contacted' : '';
+                const toggleActiveClass = isContacted ? 'active' : '';
+                const consultText = isContacted ? 'Đã Tư Vấn ✓' : 'Chờ Tư Vấn';
+                const learningText = l.learning_model === 'online' ? '💻 Online' : '🏫 Tại Lớp';
+                const classText = l.class_type === 'basic' ? 'Cơ Bản' : l.class_type === 'advanced' ? 'Nâng Cao' : 'CLC Luyện Thi';
+                const perfText = l.academic_performance === 'excellent' ? '🏆 Giỏi/Xuất sắc' : l.academic_performance === 'good' ? '✨ Học lực Khá' : '📚 Học lực TB';
+                
+                // Audit tag if consulted
+                const auditText = (isContacted && l.consulted_by) ? '<span style="background: rgba(16, 185, 129, 0.1); color: var(--accent-green); font-weight: 600; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">Đã tư vấn bởi: ' + l.consulted_by + '</span>' : '';
+
+                container.innerHTML += '<div class="lead-card ' + contactedClass + '">' +
+                    '<div class="lead-info-left">' +
+                        '<h4>' + l.student_name + ' (Học sinh) - Phụ huynh: ' + l.parent_name + '</h4>' +
+                        '<div class="lead-meta">' +
+                            '<span>📞 ' + l.phone_number + '</span>' +
+                            '<span>Khối Lớp: ' + l.grade + '</span>' +
+                            '<span>' + learningText + '</span>' +
+                            '<span>' + classText + '</span>' +
+                            '<span>' + perfText + '</span>' +
+                            '<span>Thời gian: ' + new Date(l.created_at).toLocaleTimeString() + '</span>' +
+                            auditText +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="lead-actions-right">' +
+                        '<div class="ios-toggle-container ' + toggleActiveClass + '" onclick="toggleLeadConsult(' + l.id + ')">' +
+                            '<span>' + consultText + '</span>' +
+                            '<div class="ios-switch"></div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+            });
+        }
+
+        function toggleLeadConsult(leadId) {
+            fetch('/api/v1/registrations/toggle-consulted', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({ id: leadId })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    loadLeadsSalesPortal();
+                } else {
+                    alert(result.error);
+                }
+            });
+        }
+
+        // Live SSE stream connection
+        let sseConnected = false;
+        let eventSource = null;
+        function connectSSEStream() {
+            if (sseConnected) return;
+            if (!authToken) return;
+
+            if (eventSource) {
+                try { eventSource.close(); } catch(e) {}
+            }
+
+            eventSource = new EventSource('/api/v1/registrations/stream?token=' + encodeURIComponent(authToken));
+            
+            eventSource.addEventListener('registration_created', function(e) {
+                loadLeadsSalesPortal();
+            });
+
+            eventSource.addEventListener('registration_updated', function(e) {
+                loadLeadsSalesPortal();
+            });
+
+            eventSource.addEventListener('connected', function(e) {
+                sseConnected = true;
+                document.getElementById('sales-active-user').innerText = '✓ Sales trực tuyến: ' + authName + ' (Đang kết nối)';
+            });
+
+            eventSource.onerror = function() {
+                sseConnected = false;
+                document.getElementById('sales-active-user').innerText = '⚠ Mất kết nối SSE Stream';
+            };
+        }
+
+        function playNotificationBeep() {
+            try {
+                const context = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = context.createOscillator();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(800, context.currentTime);
+                osc.connect(context.destination);
+                osc.start();
+                osc.stop(context.currentTime + 0.15);
+            } catch (err) {}
+        }
+
+        // ----------------------------------------------------
+        // ADMIN DASHBOARD DATA & CRUD LOADING
+        // ----------------------------------------------------
+
+        function loadAdminDashboardData() {
+            if (!authToken) return;
+
+            // 1. Tải báo cáo widgets
+            fetch('/api/v1/admin/reports', {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            })
+            .then(res => {
+                if (res.status === 401 || res.status === 403) {
+                    const wasLoggedIn = !!authToken;
+                    handleLogout();
+                    if (wasLoggedIn) {
+                        alert('Phiên làm việc Admin đã hết hạn hoặc không hợp lệ. Vui lòng đăng nhập lại.');
+                        openLoginModal();
+                    }
+                    throw new Error('Unauthorized');
+                }
+                return res.json();
+            })
+            .then(result => {
+                if (result.success) {
+                    const r = result.data;
+                    document.getElementById('wd-total').innerText = r.total_leads;
+                    document.getElementById('wd-contacted').innerText = r.contacted_leads;
+                    document.getElementById('wd-pending').innerText = r.pending_leads;
+                    document.getElementById('wd-ratio').innerText = Math.round(r.online_percentage) + '% / ' + Math.round(r.offline_percentage) + '%';
+                }
+            });
+
+            // 2. Tải danh sách lớp học hệ thống (CRUD)
+            loadAdminClasses();
+
+            // 3. Tải danh sách giảng viên
+            loadAdminTeachers();
+
+            // 4. Tải danh sách vinh danh học sinh
+            loadAdminHonoredStudents();
+
+            // 5. Tải danh sách tài khoản sales
+            loadAdminUsers();
+        }
+
+        // Load all classes dynamically in Admin Panel
+        function loadAdminClasses() {
+            fetch('/api/v1/homepage/classes')
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        const tbody = document.getElementById('admin-table-classes');
+                        tbody.innerHTML = '';
+                        result.data.forEach(c => {
+                            const isPopText = c.is_popular ? '<span style="color: var(--accent-amber); font-weight: bold;">★ Mũi nhọn</span>' : '-';
+                            const modelText = c.model === 'online' ? '💻 Online' : '🏫 Offline';
+                            
+                            let typeText = 'Cơ Bản';
+                            if (c.type === 'advanced') typeText = 'Nâng Cao';
+                            else if (c.type === 'high_quality') typeText = 'CLC Lớp 5';
+
+                            const editBtn = '<button class="btn-action-small" onclick="editClass(' + JSON.stringify(c).replace(/"/g, '&quot;') + ')" style="background: var(--accent-amber); color: var(--text-dark); margin-right: 5px; padding: 4px 8px; font-size: 11px;">Sửa</button>';
+                            const deleteBtn = '<button class="btn-delete-small" onclick="deleteClass(\'' + c.id + '\')" style="background: #EF4444; color: white; padding: 4px 8px; font-size: 11px;">Xóa</button>';
+
+                            tbody.innerHTML += '<tr>' +
+                                '<td style="font-weight: 600;">' + c.id + '</td>' +
+                                '<td style="font-weight: 700;">' + c.name + '</td>' +
+                                '<td>' + c.grade + '</td>' +
+                                '<td>' + modelText + '</td>' +
+                                '<td>' + typeText + '</td>' +
+                                '<td style="font-weight: 600; color: var(--accent-green);">' + c.price + '</td>' +
+                                '<td>' + isPopText + '</td>' +
+                                '<td>' + editBtn + deleteBtn + '</td>' +
+                            '</tr>';
+                        });
+                    }
+                });
+        }
+
+        // Edit class setup
+        function editClass(c) {
+            document.getElementById('class-form-title').innerText = 'Chỉnh Sửa Lớp Học: ' + c.name;
+            document.getElementById('class-edit-id').value = c.id;
+            
+            const idInput = document.getElementById('class-id-input');
+            idInput.value = c.id;
+            idInput.disabled = true; // Cannot edit original ID
+
+            document.getElementById('class-name-input').value = c.name;
+            document.getElementById('class-price-input').value = c.price;
+            document.getElementById('class-grade-input').value = c.grade;
+            document.getElementById('class-model-input').value = c.model;
+            document.getElementById('class-type-input').value = c.type;
+            document.getElementById('class-desc-input').value = c.desc;
+            document.getElementById('class-popular-input').checked = c.is_popular;
+            
+            document.getElementById('btn-cancel-class-edit').style.display = 'inline-block';
+        }
+
+        // Reset class form
+        function resetClassForm() {
+            document.getElementById('class-form-title').innerText = 'Thêm Lớp Học Mới';
+            document.getElementById('class-edit-id').value = '';
+            
+            const idInput = document.getElementById('class-id-input');
+            idInput.value = '';
+            idInput.disabled = false;
+
+            document.getElementById('admin-form-manage-class').reset();
+            document.getElementById('btn-cancel-class-edit').style.display = 'none';
+        }
+
+        // Manage dynamic class form submission
+        document.getElementById('admin-form-manage-class').onsubmit = function(e) {
+            e.preventDefault();
+            const editId = document.getElementById('class-edit-id').value;
+            const actionType = editId ? 'update' : 'add';
+            
+            const classId = document.getElementById('class-id-input').value.trim() || editId;
+            const name = document.getElementById('class-name-input').value.trim();
+            const price = document.getElementById('class-price-input').value.trim();
+            const grade = parseInt(document.getElementById('class-grade-input').value);
+            const model = document.getElementById('class-model-input').value;
+            const type = document.getElementById('class-type-input').value;
+            const desc = document.getElementById('class-desc-input').value.trim();
+            const isPopular = document.getElementById('class-popular-input').checked;
+
+            if (!classId) {
+                alert('Vui lòng nhập Mã định danh lớp (ID)');
+                return;
+            }
+
+            const payload = {
+                action: actionType,
+                id: classId,
+                class_data: {
+                    id: classId,
+                    name: name,
+                    price: price,
+                    grade: grade,
+                    model: model,
+                    type: type,
+                    desc: desc,
+                    is_popular: isPopular
+                }
+            };
+
+            fetch('/api/v1/admin/classes/manage', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert(result.message || 'Thao tác lớp học thành công!');
+                    resetClassForm();
+                    loadAdminClasses();
+                    loadHomepageClasses();
+                } else {
+                    alert(result.error);
+                }
+            });
+        };
+
+        // Delete class
+        function deleteClass(classId) {
+            if (!confirm('Bạn có chắc chắn muốn xóa vĩnh viễn khóa học \"' + classId + '\" này không?')) return;
+
+            fetch('/api/v1/admin/classes/manage', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({ action: 'delete', id: classId })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert(result.message);
+                    loadAdminClasses();
+                    loadHomepageClasses();
+                } else {
+                    alert(result.error);
+                }
+            });
+        }
+
+        // Load and render active users in Admin Panel
+        function loadAdminUsers() {
+            fetch('/api/v1/admin/users', {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    const tbody = document.getElementById('admin-table-users');
+                    tbody.innerHTML = '';
+                    result.data.forEach(u => {
+                        const isSuperAdmin = u.username === 'admin1';
+                        const deleteBtn = isSuperAdmin ? '' : '<button class="btn-delete-small" onclick="deleteSalesUser(\'' + u.username + '\')" style="background: #EF4444; color: white; padding: 4px 8px; font-size: 11px;">Xóa tài khoản</button>';
+                        const roleBadge = u.role === 'admin' ? '<span class="user-badge" style="background: rgba(255, 184, 0, 0.1); color: #B45309; padding: 2px 6px; border-radius: 4px; font-size: 10px;">Admin</span>' : '<span class="user-badge" style="background: rgba(16, 185, 129, 0.1); color: var(--accent-green); padding: 2px 6px; border-radius: 4px; font-size: 10px;">Sales / Teacher</span>';
+                        
+                        tbody.innerHTML += '<tr>' +
+                            '<td style="font-weight: 700;">' + u.username + '</td>' +
+                            '<td>' + (u.name || 'Chưa cập nhật') + '</td>' +
+                            '<td>' + roleBadge + '</td>' +
+                            '<td>' + deleteBtn + '</td>' +
+                        '</tr>';
+                    });
+                }
+            });
+        }
+
+        // Create new sales account (Only accessible to Admin)
+        document.getElementById('admin-form-create-sales-user').onsubmit = function(e) {
+            e.preventDefault();
+            const u = document.getElementById('new-sales-username').value.trim();
+            const p = document.getElementById('new-sales-password').value;
+            const n = document.getElementById('new-sales-fullname').value.trim();
+
+            fetch('/api/v1/admin/users/create', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({ username: u, password: p, name: n })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert(result.message);
+                    document.getElementById('admin-form-create-sales-user').reset();
+                    loadAdminUsers();
+                } else {
+                    alert('Lỗi tạo tài khoản: ' + result.error);
+                }
+            });
+        };
+
+        // Delete sales account
+        function deleteSalesUser(username) {
+            if (!confirm('Bạn có chắc chắn muốn xóa vĩnh viễn tài khoản sales \"' + username + '\" này không?')) return;
+
+            fetch('/api/v1/admin/users/delete', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({ username: username })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert(result.message);
+                    loadAdminUsers();
+                } else {
+                    alert(result.error);
+                }
+            });
+        }
+
+        // Load and render teachers list under Admin Panel
+        function loadAdminTeachers() {
+            fetch('/api/v1/about/teachers')
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        const cotra = result.data.find(t => t.id === 1);
+                        if (cotra) {
+                            document.getElementById('admin-cotra-name').value = cotra.name;
+                            document.getElementById('admin-cotra-role').value = cotra.role;
+                            document.getElementById('admin-cotra-bio').value = cotra.bio;
+                            document.getElementById('admin-cotra-avatar-url').value = cotra.avatar;
+                            document.getElementById('admin-cotra-avatar-preview').src = cotra.avatar || '/assets/cotra.jpg';
+                        }
+
+                        const tbody = document.getElementById('admin-table-teachers');
+                        tbody.innerHTML = '';
+                        result.data.forEach(t => {
+                            const img = t.avatar || '/assets/cotra.jpg';
+                            const isFounder = t.id === 1;
+                            const deleteBtn = isFounder ? '' : '<button class="btn-delete-small" onclick="deleteTeacher(' + t.id + ')" style="background: #EF4444; color: white; padding: 4px 8px; font-size: 11px;">Xóa</button>';
+                            const editBtn = '<button class="btn-action-small" onclick="editTeacher(' + JSON.stringify(t).replace(/"/g, '&quot;') + ')" style="background: var(--accent-amber); color: var(--text-dark); margin-right: 5px; padding: 4px 8px; font-size: 11px;">Sửa</button>';
+                            
+                            tbody.innerHTML += '<tr>' +
+                                '<td><img src=\"' + img + '\" style=\"width: 30px; height: 30px; border-radius: 50%; object-fit: cover;\"></td>' +
+                                '<td style=\"font-weight: 700;\">' + t.name + '</td>' +
+                                '<td>' + t.role + '</td>' +
+                                '<td>' + t.education + '</td>' +
+                                '<td>' + t.order + '</td>' +
+                                '<td>' + editBtn + deleteBtn + '</td>' +
+                            '</tr>';
+                        });
+                    }
+                });
+        }
+
+        function editTeacher(t) {
+            document.getElementById('teacher-form-title').innerText = 'Chỉnh Sửa Giảng Viên: ' + t.name;
+            document.getElementById('teacher-edit-id').value = t.id;
+            document.getElementById('teacher-name').value = t.name;
+            document.getElementById('teacher-role').value = t.role;
+            document.getElementById('teacher-education').value = t.education;
+            document.getElementById('teacher-avatar-url').value = t.avatar;
+            document.getElementById('teacher-order').value = t.order;
+            document.getElementById('teacher-bio').value = t.bio;
+            document.getElementById('btn-cancel-teacher-edit').style.display = 'inline-block';
+        }
+
+        function resetTeacherForm() {
+            document.getElementById('teacher-form-title').innerText = 'Thêm Mới Giảng Viên';
+            document.getElementById('teacher-edit-id').value = '';
+            document.getElementById('admin-form-manage-teacher').reset();
+            document.getElementById('teacher-avatar-url').value = '';
+            document.getElementById('btn-cancel-teacher-edit').style.display = 'none';
+        }
+
+        // Upload avatar teacher
+        document.getElementById('teacher-avatar-file').onchange = function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/api/v1/admin/upload', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + authToken },
+                body: formData
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    document.getElementById('teacher-avatar-url').value = result.url;
+                    alert('Tải ảnh đại diện giáo viên thành công!');
+                } else {
+                    alert(result.error);
+                }
+            });
+        };
+
+        // Manage teacher save form
+        document.getElementById('admin-form-manage-teacher').onsubmit = function(e) {
+            e.preventDefault();
+            const editId = document.getElementById('teacher-edit-id').value;
+            const name = document.getElementById('teacher-name').value.trim();
+            const role = document.getElementById('teacher-role').value.trim();
+            const education = document.getElementById('teacher-education').value.trim();
+            const order = parseInt(document.getElementById('teacher-order').value);
+            const avatar = document.getElementById('teacher-avatar-url').value;
+            const bio = document.getElementById('teacher-bio').value.trim();
+
+            if (editId) {
+                fetch('/api/v1/admin/teachers/update', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ id: parseInt(editId), name: name, role: role, education: education, order: order, avatar: avatar, bio: bio })
+                })
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        alert('Cập nhật giảng viên thành công!');
+                        resetTeacherForm();
+                        loadAdminTeachers();
+                        loadAboutTeachers();
+                    } else {
+                        alert(result.error);
+                    }
+                });
+            } else {
+                fetch('/api/v1/admin/teachers/manage', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({
+                        action: 'add',
+                        teacher_data: { name: name, role: role, education: education, order: order, avatar: avatar, bio: bio }
+                    })
+                })
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        alert(result.message);
+                        resetTeacherForm();
+                        loadAdminTeachers();
+                        loadAboutTeachers();
+                    } else {
+                        alert(result.error);
+                    }
+                });
+            }
+        };
+
+        function deleteTeacher(teacherId) {
+            if (!confirm('Bạn có chắc chắn muốn xóa giảng viên này khỏi danh sách giới thiệu không?')) return;
+
+            fetch('/api/v1/admin/teachers/manage', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({ action: 'delete', id: teacherId })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert(result.message);
+                    loadAdminTeachers();
+                    loadAboutTeachers();
+                } else {
+                    alert(result.error);
+                }
+            });
+        }
+
+        // Upload avatar Co Tra directly
+        document.getElementById('admin-cotra-avatar-file').onchange = function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/api/v1/admin/upload', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + authToken },
+                body: formData
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    document.getElementById('admin-cotra-avatar-url').value = result.url;
+                    document.getElementById('admin-cotra-avatar-preview').src = result.url;
+                    alert('Tải ảnh đại diện Cô Trà hoàn tất!');
+                } else {
+                    alert('Lỗi upload ảnh: ' + result.error);
+                }
+            });
+        };
+
+        // Update Co Tra bio
+        document.getElementById('admin-form-cotra-bio').onsubmit = function(e) {
+            e.preventDefault();
+            const name = document.getElementById('admin-cotra-name').value;
+            const role = document.getElementById('admin-cotra-role').value;
+            const bio = document.getElementById('admin-cotra-bio').value;
+            const avatar = document.getElementById('admin-cotra-avatar-url').value;
+
+            fetch('/api/v1/admin/teachers/update', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({ id: 1, name: name, role: role, bio: bio, avatar: avatar })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert('Cập nhật tiểu sử Cô Trà hoàn tất!');
+                    loadAdminDashboardData();
+                    loadAboutTeachers();
+                } else {
+                    alert(result.error);
+                }
+            });
+        };
+
+        // Load admin honored students list (CLEAN TABLE RENDERING - FIX FOR STR/TR BUG)
+        function loadAdminHonoredStudents() {
+            fetch('/api/v1/honor/students')
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        const tbody = document.getElementById('admin-table-students');
+                        tbody.innerHTML = '';
+                        result.data.forEach(s => {
+                            const img = s.avatar || 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"30\" height=\"30\" viewBox=\"0 0 100 100\"><circle cx=\"50\" cy=\"50\" r=\"45\" fill=\"%23E2E8F0\"/></svg>';
+                            tbody.innerHTML += '<tr>' +
+                                '<td><img src=\"' + img + '\" style=\"width: 30px; height: 30px; border-radius: 50%; object-fit: cover;\"></td>' +
+                                '<td style=\"font-weight: 700;\">' + s.name + '</td>' +
+                                '<td>' + s.class + '</td>' +
+                                '<td>' + s.year + '</td>' +
+                                '<td>' + s.achievement + '</td>' +
+                                '<td><button class=\"btn-delete-small\" onclick=\"deleteHonoredStudent(' + s.id + ')\">Xóa</button></td>' +
+                            '</tr>';
+                        });
+                    }
+                });
+        }
+
+        // Upload honored student photo
+        document.getElementById('new-stu-avatar-file').onchange = function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/api/v1/admin/upload', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + authToken },
+                body: formData
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    document.getElementById('new-stu-avatar-url').value = result.url;
+                    alert('Tải ảnh chân dung học sinh thành công!');
+                } else {
+                    alert(result.error);
+                }
+            });
+        };
+
+        // Add honored student
+        document.getElementById('admin-form-add-student').onsubmit = function(e) {
+            e.preventDefault();
+            const name = document.getElementById('new-stu-name').value;
+            const sClass = document.getElementById('new-stu-class').value;
+            const year = document.getElementById('new-stu-year').value;
+            const achievement = document.getElementById('new-stu-achievement').value;
+            const avatar = document.getElementById('new-stu-avatar-url').value;
+
+            fetch('/api/v1/admin/students/manage', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({
+                    action: 'add',
+                    student_data: { name: name, class: sClass, year: year, achievement: achievement, avatar: avatar }
+                })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert(result.message);
+                    document.getElementById('admin-form-add-student').reset();
+                    document.getElementById('new-stu-avatar-url').value = '';
+                    loadAdminDashboardData();
+                    loadHonorStudents();
+                } else {
+                    alert(result.error);
+                }
+            });
+        };
+
+        // Delete honored student
+        function deleteHonoredStudent(stuId) {
+            if (!confirm('Bạn có chắc chắn muốn xóa học sinh này khỏi Bảng Vàng Vinh Danh hay không?')) return;
+
+            fetch('/api/v1/admin/students/manage', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({ action: 'delete', id: stuId })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert(result.message);
+                    loadAdminDashboardData();
+                    loadHonorStudents();
+                } else {
+                    alert(result.error);
+                }
+            });
+        }
+
+
+
+        // Initialize default tabs and configs on load
+        window.onload = function() {
+            updateNavbarAuthUI();
+            switchTab('tab-homepage');
+        };
+    </script>
+</body>
+</html>`
