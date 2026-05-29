@@ -65,18 +65,54 @@
             color: var(--text-dark);
         }
 
+        .logo-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
         .logo-circle {
-            background: linear-gradient(135deg, var(--accent-amber), #FFA000);
-            width: 42px;
-            height: 42px;
-            border-radius: 12px;
+            background: linear-gradient(135deg, #10B981, #059669);
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: var(--white);
-            font-weight: 700;
-            font-size: 20px;
-            box-shadow: 0 4px 10px rgba(255, 184, 0, 0.3);
+            font-weight: 800;
+            font-size: 22px;
+            box-shadow: 0 8px 16px rgba(16, 185, 129, 0.25), inset 0 2px 4px rgba(255, 255, 255, 0.3);
+            position: relative;
+            z-index: 2;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+
+        .logo-circle::after {
+            content: '';
+            position: absolute;
+            top: -2px; left: -2px; right: -2px; bottom: -2px;
+            background: linear-gradient(135deg, #FFB800, #10B981, #3B82F6);
+            border-radius: 16px;
+            z-index: -1;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .brand-logo:hover .logo-circle {
+            transform: translateY(-2px) scale(1.05);
+        }
+
+        .brand-logo:hover .logo-circle::after {
+            opacity: 1;
+            animation: gradient-spin 3s linear infinite;
+        }
+
+        @keyframes gradient-spin {
+            0% { filter: hue-rotate(0deg); }
+            100% { filter: hue-rotate(360deg); }
         }
 
         .brand-name h1 {
@@ -1324,7 +1360,7 @@
             .header-container {
                 flex-direction: column;
                 gap: 15px;
-                padding: 10px 0;
+                padding: 15px 20px;
             }
             .nav-links {
                 width: 100%;
@@ -1364,10 +1400,19 @@
                 height: 180px;
             }
 
-            /* 3. Lưới lớp học & Giáo viên */
-            .classes-grid, .teachers-grid, .students-grid {
+            /* 3. Lưới lớp học & Giáo viên & Vinh Danh */
+            .classes-grid, .teachers-grid, .students-grid, .podium-grid {
                 grid-template-columns: 1fr !important;
                 gap: 20px;
+            }
+            
+            .podium-card.rank-1 {
+                transform: scale(1) !important;
+                margin-top: 20px;
+            }
+
+            .podium-card.rank-1:hover {
+                transform: translateY(-4px) !important;
             }
 
             /* 4. Form Đăng ký */
@@ -1449,7 +1494,9 @@
     <header>
         <div class="header-container">
             <a href="#" class="brand-logo" onclick="switchTab('tab-homepage')">
-                <div class="logo-circle">Ω</div>
+                <div class="logo-wrapper">
+                    <div class="logo-circle">T</div>
+                </div>
                 <div class="brand-name">
                     <h1>TOÁN CÔ TRÀ</h1>
                     <p>Rèn Luyện Tư Duy Liên Cấp</p>
