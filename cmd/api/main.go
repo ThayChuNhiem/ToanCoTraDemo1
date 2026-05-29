@@ -278,7 +278,7 @@ func main() {
 }
 
 // Giao diện Premium SPA tích hợp 5 phân hệ
-const htmlPlayground = ``<!DOCTYPE html>
+const htmlPlayground = `<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
@@ -3703,4 +3703,3 @@ const htmlPlayground = ``<!DOCTYPE html>
     </script>
 </body>
 </html>`
-`
