@@ -353,20 +353,19 @@ const htmlPlayground = `<!DOCTYPE html>
         }
 
         .logo-circle {
-            background: linear-gradient(135deg, #10B981, #059669);
+            background: linear-gradient(135deg, #FDE047, #F59E0B);
             width: 44px;
             height: 44px;
             border-radius: 14px;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: var(--white);
+            color: var(--text-dark);
             font-weight: 800;
             font-size: 22px;
-            box-shadow: 0 8px 16px rgba(16, 185, 129, 0.25), inset 0 2px 4px rgba(255, 255, 255, 0.3);
+            box-shadow: 0 8px 16px rgba(245, 158, 11, 0.25), inset 0 2px 4px rgba(255, 255, 255, 0.6);
             position: relative;
             z-index: 2;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
             transition: all 0.3s ease;
         }
 
@@ -374,7 +373,7 @@ const htmlPlayground = `<!DOCTYPE html>
             content: '';
             position: absolute;
             top: -2px; left: -2px; right: -2px; bottom: -2px;
-            background: linear-gradient(135deg, #FFB800, #10B981, #3B82F6);
+            background: linear-gradient(135deg, #FFD700, #FDE047, #F59E0B);
             border-radius: 16px;
             z-index: -1;
             opacity: 0;
@@ -1767,6 +1766,7 @@ const htmlPlayground = `<!DOCTYPE html>
             }
         }
     </style>
+    <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
 
@@ -1775,7 +1775,7 @@ const htmlPlayground = `<!DOCTYPE html>
         <div class="header-container">
             <a href="#" class="brand-logo" onclick="switchTab('tab-homepage')">
                 <div class="logo-wrapper">
-                    <div class="logo-circle">T</div>
+                    <div class="logo-circle"><i data-lucide="graduation-cap"></i></div>
                 </div>
                 <div class="brand-name">
                     <h1>TOÁN CÔ TRÀ</h1>
@@ -3697,6 +3697,7 @@ const htmlPlayground = `<!DOCTYPE html>
 
         // Initialize default tabs and configs on load
         window.onload = function() {
+            lucide.createIcons();
             updateNavbarAuthUI();
             switchTab('tab-homepage');
         };
