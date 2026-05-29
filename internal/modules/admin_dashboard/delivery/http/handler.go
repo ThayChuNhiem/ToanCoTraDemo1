@@ -505,3 +505,62 @@ func (h *AdminHandler) ManageClass(w http.ResponseWriter, r *http.Request) {
 		h.writeJSONError(w, http.StatusBadRequest, "Thao tác không được hỗ trợ (chỉ chấp nhận 'add', 'update' hoặc 'delete')")
 	}
 }
+
+// ManageGallery xử lý POST /api/v1/admin/gallery/manage
+func (h *AdminHandler) ManageGallery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeJSONError(w, http.StatusMethodNotAllowed, "Phương thức HTTP không được hỗ trợ")
+		return
+	}
+
+	if session := h.authenticateAdmin(w, r); session == nil {
+		return
+	}
+
+	var req struct {
+		Action    string               `json:"action"` // "add" hoặc "delete"
+		ID        int64                `json:"id"`
+		ImageData *domain.GalleryImage `json:"image_data"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+
+	if req.Action == "add" {
+		if req.ImageData == nil {
+			h.writeJSONError(w, http.StatusBadRequest, "Thiếu dữ liệu hình ảnh cần thêm")
+			return
+		}
+
+		err := h.uc.AddGalleryImage(req.ImageData)
+		if err != nil {
+			h.writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Thêm hình ảnh hoạt động lớp học thành công!",
+			"data":    req.ImageData,
+		})
+		return
+	} else if req.Action == "delete" {
+		err := h.uc.DeleteGalleryImage(req.ID)
+		if err != nil {
+			h.writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Xóa hình ảnh hoạt động lớp học thành công!",
+		})
+		return
+	} else {
+		h.writeJSONError(w, http.StatusBadRequest, "Hành động (Action) không hợp lệ")
+	}
+}

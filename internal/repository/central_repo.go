@@ -14,11 +14,12 @@ import (
 
 // DataStore là cấu trúc dữ liệu lưu trữ toàn bộ trong database_mock.json
 type DataStore struct {
-	Leads    []*domain.Lead    `json:"leads"`
-	Classes  []*domain.Class   `json:"classes"`
-	Teachers []*domain.Teacher `json:"teachers"`
-	Students []*domain.Student `json:"students"`
-	Users    []*domain.User    `json:"users"`
+	Leads    []*domain.Lead          `json:"leads"`
+	Classes  []*domain.Class         `json:"classes"`
+	Teachers []*domain.Teacher       `json:"teachers"`
+	Students []*domain.Student       `json:"students"`
+	Users    []*domain.User          `json:"users"`
+	Gallery  []*domain.GalleryImage  `json:"gallery"` // [MỚI] Hình ảnh hoạt động lớp học
 }
 
 // CentralRepository là trình quản lý kho dữ liệu tập trung an toàn đa luồng,
@@ -30,6 +31,7 @@ type CentralRepository struct {
 	nextLeadID    int64
 	nextTeacherID int64
 	nextStudentID int64
+	nextGalleryID int64 // [MỚI] ID tự tăng của hình ảnh gallery
 }
 
 // NewCentralRepository khởi tạo CentralRepository
@@ -42,10 +44,12 @@ func NewCentralRepository(filePath string) *CentralRepository {
 			Teachers: make([]*domain.Teacher, 0),
 			Students: make([]*domain.Student, 0),
 			Users:    make([]*domain.User, 0),
+			Gallery:  make([]*domain.GalleryImage, 0),
 		},
 		nextLeadID:    1,
 		nextTeacherID: 1,
 		nextStudentID: 1,
+		nextGalleryID: 1,
 	}
 
 	// Tải dữ liệu hoặc khởi tạo dữ liệu mẫu nếu chưa có tệp tin
@@ -53,6 +57,27 @@ func NewCentralRepository(filePath string) *CentralRepository {
 		fmt.Printf("[WARN] Không thể tải database_mock.json (%s), tiến hành gieo hạt dữ liệu mẫu mặc định...\n", err.Error())
 		repo.seedDefaultData()
 		_ = repo.save()
+	} else {
+		// Nếu tải thành công nhưng trường gallery trống (ví dụ do database_mock.json cũ chưa có gallery),
+		// gieo hạt một số hình ảnh lớp học thực tế đẹp mắt để UI hiển thị lộng lẫy ngay lập tức.
+		if len(repo.store.Gallery) == 0 {
+			repo.store.Gallery = []*domain.GalleryImage{
+				{
+					ID:  1,
+					URL: "https://images.unsplash.com/photo-1577896851231-70ef18881754?q=80&w=600&auto=format&fit=crop",
+				},
+				{
+					ID:  2,
+					URL: "https://images.unsplash.com/photo-1427504494785-3a9ca7044f45?q=80&w=600&auto=format&fit=crop",
+				},
+				{
+					ID:  3,
+					URL: "https://images.unsplash.com/photo-1509062522246-3755977927d7?q=80&w=600&auto=format&fit=crop",
+				},
+			}
+			repo.nextGalleryID = 4
+			_ = repo.save()
+		}
 	}
 
 	return repo
@@ -95,6 +120,11 @@ func (r *CentralRepository) load() error {
 	for _, s := range r.store.Students {
 		if s.ID >= r.nextStudentID {
 			r.nextStudentID = s.ID + 1
+		}
+	}
+	for _, g := range r.store.Gallery {
+		if g.ID >= r.nextGalleryID {
+			r.nextGalleryID = g.ID + 1
 		}
 	}
 
@@ -296,9 +326,18 @@ func (r *CentralRepository) seedDefaultData() {
 		},
 	}
 
+	// Gieo hạt hình ảnh lớp học
+	r.store.Gallery = []*domain.GalleryImage{
+		{
+			ID:  1,
+			URL: "/assets/banner.png",
+		},
+	}
+
 	r.nextLeadID = 3
 	r.nextTeacherID = 4
 	r.nextStudentID = 4
+	r.nextGalleryID = 2
 }
 
 // -----------------------------------------------------------------------------
@@ -661,6 +700,54 @@ func (r *CentralRepository) DeleteClass(id string) error {
 	}
 
 	r.store.Classes = append(r.store.Classes[:index], r.store.Classes[index+1:]...)
+	return r.save()
+}
+
+// -----------------------------------------------------------------------------
+// IMPLEMENTATION OF domain.GalleryRepository
+// -----------------------------------------------------------------------------
+
+func (r *CentralRepository) FindAllImages() ([]*domain.GalleryImage, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	copied := make([]*domain.GalleryImage, len(r.store.Gallery))
+	for i, g := range r.store.Gallery {
+		copied[i] = &domain.GalleryImage{
+			ID:  g.ID,
+			URL: g.URL,
+		}
+	}
+	return copied, nil
+}
+
+func (r *CentralRepository) SaveImage(img *domain.GalleryImage) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	img.ID = r.nextGalleryID
+	r.nextGalleryID++
+	r.store.Gallery = append(r.store.Gallery, img)
+	return r.save()
+}
+
+func (r *CentralRepository) DeleteImage(id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	index := -1
+	for i, g := range r.store.Gallery {
+		if g.ID == id {
+			index = i
+			break
+		}
+	}
+
+	if index == -1 {
+		return errors.New("không tìm thấy hình ảnh lớp học yêu cầu xóa")
+	}
+
+	r.store.Gallery = append(r.store.Gallery[:index], r.store.Gallery[index+1:]...)
 	return r.save()
 }
 

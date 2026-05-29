@@ -79,6 +79,9 @@ func (uc *AdminUsecase) AddHonoredStudent(student *domain.Student) error {
 	if student.Name == "" || student.Class == "" || student.Achievement == "" {
 		return errors.New("họ tên học sinh, lớp học và thành tích xuất sắc không được để trống")
 	}
+	if student.Order < 0 {
+		student.Order = 0
+	}
 	return uc.repo.SaveStudent(student)
 }
 
@@ -152,5 +155,21 @@ func (uc *AdminUsecase) DeleteClass(id string) error {
 		return errors.New("mã lớp học không hợp lệ")
 	}
 	return uc.repo.DeleteClass(id)
+}
+
+// AddGalleryImage thêm hình ảnh lớp học mới
+func (uc *AdminUsecase) AddGalleryImage(img *domain.GalleryImage) error {
+	if img.URL == "" {
+		return errors.New("đường dẫn hình ảnh hoạt động lớp học không được để trống")
+	}
+	return uc.repo.SaveImage(img)
+}
+
+// DeleteGalleryImage xóa hình ảnh lớp học
+func (uc *AdminUsecase) DeleteGalleryImage(id int64) error {
+	if id <= 0 {
+		return errors.New("mã ID hình ảnh lớp học không hợp lệ")
+	}
+	return uc.repo.DeleteImage(id)
 }
 

@@ -30,3 +30,7 @@ func (uc *HomepageUsecase) RegisterLead(lead *domain.Lead) (*domain.Lead, error)
 
 	return lead, nil
 }
+
+func (uc *HomepageUsecase) GetGalleryImages() ([]*domain.GalleryImage, error) {
+	return uc.repo.FindAllImages()
+}

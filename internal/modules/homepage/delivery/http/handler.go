@@ -79,3 +79,23 @@ func (h *HomepageHandler) writeJSONError(w http.ResponseWriter, statusCode int, 
 		"error":   message,
 	})
 }
+
+// GetGalleryImages xử lý GET /api/v1/homepage/gallery
+func (h *HomepageHandler) GetGalleryImages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeJSONError(w, http.StatusMethodNotAllowed, "Phương thức HTTP không được hỗ trợ")
+		return
+	}
+
+	images, err := h.uc.GetGalleryImages()
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, "Không thể tải danh sách hình ảnh lớp học")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"data":    images,
+	})
+}

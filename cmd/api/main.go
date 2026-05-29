@@ -86,6 +86,13 @@ func main() {
 		homepageHandler.GetClasses(w, r)
 	})
 
+	http.HandleFunc("/api/v1/homepage/gallery", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		homepageHandler.GetGalleryImages(w, r)
+	})
+
 	http.HandleFunc("/api/v1/registrations", func(w http.ResponseWriter, r *http.Request) {
 		if setupCORS(w, r) {
 			return
@@ -225,6 +232,13 @@ func main() {
 			return
 		}
 		adminHandler.ManageClass(w, r)
+	})
+
+	http.HandleFunc("/api/v1/admin/gallery/manage", func(w http.ResponseWriter, r *http.Request) {
+		if setupCORS(w, r) {
+			return
+		}
+		adminHandler.ManageGallery(w, r)
 	})
 
 	// Phục vụ tệp tin tĩnh (Static Assets - ảnh banner và ảnh cô Trà)
@@ -537,6 +551,39 @@ const htmlPlayground = `<!DOCTYPE html>
             grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 25px;
             margin-bottom: 50px;
+        }
+
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 50px;
+        }
+
+        .gallery-card {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: var(--primary-shadow);
+            border: var(--glass-border);
+            height: 220px;
+            transition: all 0.3s ease;
+        }
+
+        .gallery-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.4s ease;
+        }
+
+        .gallery-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 24px rgba(0,0,0,0.15);
+        }
+
+        .gallery-card:hover img {
+            transform: scale(1.08);
         }
 
         .class-card {
@@ -1683,6 +1730,11 @@ const htmlPlayground = `<!DOCTYPE html>
                     <button type="submit" class="btn-submit">Đăng Ký Tư Vấn Học Thử</button>
                 </form>
             </div>
+
+            <div class="classes-section-title" style="margin-top: 50px;">Hình Ảnh Hoạt Động Lớp Học Thực Tế</div>
+            <div id="homepage-gallery-grid" class="gallery-grid" style="padding: 0 20px;">
+                <!-- Tải động các hình ảnh từ API -->
+            </div>
         </div>
 
         <!-- ---------------------------------------------------- -->
@@ -2046,7 +2098,7 @@ const htmlPlayground = `<!DOCTYPE html>
                                 <div style="display: grid; grid-template-columns: 100px 1fr; gap: 15px; margin-top: 5px;">
                                     <div class="form-group" style="margin-bottom: 10px;">
                                         <label>Thứ tự</label>
-                                        <input type="number" id="new-stu-order" class="form-control" value="1" required style="font-size:12px; padding:6px 10px; text-align: center;">
+                                        <input type="number" id="new-stu-order" class="form-control" value="1" min="0" required style="font-size:12px; padding:6px 10px; text-align: center;">
                                     </div>
                                     <div class="form-group" style="margin-bottom: 10px;">
                                         <label>Ảnh học sinh (Upload ảnh trực tiếp)</label>
@@ -2082,6 +2134,46 @@ const htmlPlayground = `<!DOCTYPE html>
                                 <!-- Load động danh sách học sinh kèm nút xóa -->
                             </tbody>
                         </table>
+                        </div>
+                    </div>
+
+                    <!-- 5. Quản lý Hình ảnh Hoạt động Lớp học -->
+                    <div class="editor-card" style="grid-column: span 2;">
+                        <h3>Quản Lý Hình Ảnh Hoạt Động Lớp Học (Trang Chủ)</h3>
+                        <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Tải lên và quản lý danh mục hình ảnh thực tế của các hoạt động lớp học hiển thị ngoài Trang Chủ</p>
+
+                        <div style="background-color: var(--bg-snowy); padding: 15px; border-radius: 12px; margin-bottom: 15px; border: var(--glass-border);">
+                            <h4 style="font-size: 14px; margin-bottom: 10px; font-weight: 600;">Thêm Hình Ảnh Hoạt Động Mới</h4>
+                            <form id="admin-form-add-gallery" style="margin-top: 10px;">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; align-items: center;">
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Chọn file ảnh từ máy (Tải lên trực tiếp)</label>
+                                        <input type="file" id="new-gallery-file" class="form-control" accept="image/*" style="font-size: 11px; padding:4px;" required>
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label style="font-size: 11px;">Đường dẫn ảnh hoạt động</label>
+                                        <input type="text" id="new-gallery-url" class="form-control" style="font-size: 12px; padding:6px 10px;" placeholder="Tự động điền sau khi tải file hoặc nhập URL" required>
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn-action-small" style="margin-top: 12px; background-color: var(--accent-green); color: white; padding: 8px 15px;">Thêm Vào Thư Viện Ảnh</button>
+                            </form>
+                        </div>
+
+                        <h4 style="font-size: 14px; margin-bottom: 8px; font-weight: 600;">Danh Sách Hình Ảnh Thư Viện Hiện Tại</h4>
+                        <div style="overflow-x: auto; max-width: 100%; border: var(--glass-border); border-radius: 8px; background: white;">
+                            <table class="admin-list-table" style="margin-top: 0; font-size: 12px;">
+                                <thead>
+                                    <tr>
+                                        <th>Ảnh Preview</th>
+                                        <th>Mã Số ID</th>
+                                        <th>Đường Dẫn URL</th>
+                                        <th>Thao Tác</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-table-gallery">
+                                    <!-- Load động danh sách hình ảnh gallery -->
+                                </tbody>
+                            </table>
                         </div>
                     </div>
 
@@ -2185,6 +2277,7 @@ const htmlPlayground = `<!DOCTYPE html>
             if (tabId === 'tab-homepage') {
                 document.getElementById('btn-homepage').classList.add('active');
                 loadHomepageClasses();
+                loadHomepageGallery();
                 selectGrade(currentGrade);
             } else if (tabId === 'tab-about') {
                 document.getElementById('btn-about').classList.add('active');
@@ -2656,6 +2749,9 @@ const htmlPlayground = `<!DOCTYPE html>
 
             // 5. Tải danh sách tài khoản sales
             loadAdminUsers();
+
+            // 6. Tải danh sách hình ảnh hoạt động lớp học
+            loadAdminGallery();
         }
 
         // Load all classes dynamically in Admin Panel
@@ -3148,7 +3244,8 @@ const htmlPlayground = `<!DOCTYPE html>
             const name = document.getElementById('new-stu-name').value;
             const sClass = document.getElementById('new-stu-class').value;
             const year = document.getElementById('new-stu-year').value;
-            const order = parseInt(document.getElementById('new-stu-order').value) || 1;
+            let order = parseInt(document.getElementById('new-stu-order').value) || 0;
+            if (order < 0) order = 0;
             const achievement = document.getElementById('new-stu-achievement').value;
             const avatar = document.getElementById('new-stu-avatar-url').value;
 
@@ -3202,6 +3299,157 @@ const htmlPlayground = `<!DOCTYPE html>
         }
 
 
+
+        // ----------------------------------------------------
+        // CLASSROOM GALLERY LOADING & MANAGEMENT
+        // ----------------------------------------------------
+
+        // Load Homepage dynamic Classroom Gallery
+        function loadHomepageGallery() {
+            fetch('/api/v1/homepage/gallery')
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        const grid = document.getElementById('homepage-gallery-grid');
+                        grid.innerHTML = '';
+                        
+                        if (result.data.length === 0) {
+                            grid.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 30px; grid-column: 1/-1;">Hiện chưa có hình ảnh hoạt động lớp học nào.</div>';
+                            return;
+                        }
+
+                        result.data.forEach(img => {
+                            grid.innerHTML += '<div class="gallery-card">' +
+                                '<img src="' + img.url + '" alt="Hình ảnh hoạt động lớp học">' +
+                            '</div>';
+                        });
+                    }
+                })
+                .catch(err => {
+                    console.error('Error loading gallery images:', err);
+                });
+        }
+
+        // Load Admin dynamic Classroom Gallery
+        function loadAdminGallery() {
+            fetch('/api/v1/homepage/gallery')
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success) {
+                        const tbody = document.getElementById('admin-table-gallery');
+                        tbody.innerHTML = '';
+                        
+                        if (result.data.length === 0) {
+                            tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">Chưa có hình ảnh hoạt động lớp học nào.</td></tr>';
+                            return;
+                        }
+
+                        result.data.forEach(img => {
+                            tbody.innerHTML += '<tr>' +
+                                '<td><img src="' + img.url + '" style="width: 80px; height: 50px; border-radius: 6px; object-fit: cover;"></td>' +
+                                '<td style="font-weight: 700;">' + img.id + '</td>' +
+                                '<td style="font-family: monospace; font-size: 11px;">' + img.url + '</td>' +
+                                '<td><button class="btn-delete-small" onclick="deleteGalleryImage(' + img.id + ')">Xóa ảnh</button></td>' +
+                            '</tr>';
+                        });
+                    }
+                });
+        }
+
+        // Upload Gallery Image File
+        document.getElementById('new-gallery-file').onchange = function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/api/v1/admin/upload', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + authToken },
+                body: formData
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    document.getElementById('new-gallery-url').value = result.url;
+                    alert('Tải ảnh hoạt động lên thành công!');
+                } else {
+                    alert('Lỗi tải ảnh: ' + result.error);
+                }
+            })
+            .catch(err => {
+                console.error('Error uploading file:', err);
+                alert('Có lỗi xảy ra khi tải ảnh lên.');
+            });
+        };
+
+        // Add Gallery Image Submit
+        document.getElementById('admin-form-add-gallery').onsubmit = function(e) {
+            e.preventDefault();
+            const url = document.getElementById('new-gallery-url').value.trim();
+
+            if (!url) {
+                alert('Vui lòng chọn file tải lên hoặc nhập đường dẫn ảnh.');
+                return;
+            }
+
+            fetch('/api/v1/admin/gallery/manage', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({
+                    action: 'add',
+                    image_data: { url: url }
+                })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert(result.message || 'Thêm ảnh hoạt động thành công!');
+                    document.getElementById('admin-form-add-gallery').reset();
+                    document.getElementById('new-gallery-url').value = '';
+                    loadAdminGallery();
+                    loadHomepageGallery();
+                } else {
+                    alert('Lỗi thêm ảnh: ' + result.error);
+                }
+            })
+            .catch(err => {
+                console.error('Error adding image:', err);
+                alert('Có lỗi xảy ra.');
+            });
+        };
+
+        // Delete Gallery Image
+        function deleteGalleryImage(imgId) {
+            if (!confirm('Bạn có chắc chắn muốn xóa hình ảnh hoạt động lớp học này khỏi trang chủ không?')) return;
+
+            fetch('/api/v1/admin/gallery/manage', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: JSON.stringify({ action: 'delete', id: imgId })
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    alert(result.message || 'Xóa ảnh hoạt động thành công!');
+                    loadAdminGallery();
+                    loadHomepageGallery();
+                } else {
+                    alert('Lỗi xóa ảnh: ' + result.error);
+                }
+            })
+            .catch(err => {
+                console.error('Error deleting image:', err);
+                alert('Có lỗi xảy ra khi xóa ảnh.');
+            });
+        }
 
         // Initialize default tabs and configs on load
         window.onload = function() {
