@@ -962,6 +962,111 @@ const htmlPlayground = `<!DOCTYPE html>
             gap: 25px;
         }
 
+        /* Phong cách bục vinh danh Top 3 học sinh xuất sắc nhất */
+        .podium-container {
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.04) 0%, rgba(255, 184, 0, 0.01) 100%);
+            border: 2px solid rgba(255, 215, 0, 0.15);
+            border-radius: 24px;
+            padding: 35px 25px;
+            box-shadow: 0 15px 40px rgba(255, 184, 0, 0.02);
+            text-align: center;
+        }
+
+        .podium-title {
+            color: var(--text-dark);
+            font-size: 20px;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 35px;
+            letter-spacing: 0.5px;
+        }
+
+        .podium-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 30px;
+            align-items: end;
+            justify-content: center;
+        }
+
+        .podium-card {
+            background: var(--white);
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+            position: relative;
+            transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.03);
+        }
+
+        .podium-card.rank-1 {
+            border: 2px solid #FFD700;
+            box-shadow: 0 20px 40px rgba(255, 215, 0, 0.12);
+            transform: scale(1.05);
+            z-index: 5;
+        }
+        
+        .podium-card.rank-1:hover {
+            transform: scale(1.08) translateY(-4px);
+            box-shadow: 0 25px 50px rgba(255, 215, 0, 0.2);
+        }
+
+        .podium-card.rank-2 {
+            border: 2px solid #C0C0C0;
+            box-shadow: 0 15px 30px rgba(192, 192, 192, 0.08);
+        }
+        
+        .podium-card.rank-2:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(192, 192, 192, 0.15);
+        }
+
+        .podium-card.rank-3 {
+            border: 2px solid #CD7F32;
+            box-shadow: 0 15px 30px rgba(205, 127, 50, 0.08);
+        }
+        
+        .podium-card.rank-3:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(205, 127, 50, 0.15);
+        }
+
+        .badge-rank-1 {
+            background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%) !important;
+            color: #1E293B !important;
+            box-shadow: 0 4px 10px rgba(255, 215, 0, 0.3);
+        }
+
+        .badge-rank-2 {
+            background: linear-gradient(135deg, #E2E8F0 0%, #94A3B8 100%) !important;
+            color: #1E293B !important;
+            box-shadow: 0 4px 10px rgba(148, 163, 184, 0.2);
+        }
+
+        .badge-rank-3 {
+            background: linear-gradient(135deg, #FFEDD5 0%, #D97706 100%) !important;
+            color: #FFFFFF !important;
+            box-shadow: 0 4px 10px rgba(217, 119, 6, 0.2);
+        }
+
+        .podium-card.rank-1 .student-avatar {
+            width: 120px;
+            height: 120px;
+            border: 4px solid #FFD700;
+        }
+
+        .podium-card.rank-2 .student-avatar {
+            width: 100px;
+            height: 100px;
+            border: 3px solid #C0C0C0;
+        }
+
+        .podium-card.rank-3 .student-avatar {
+            width: 100px;
+            height: 100px;
+            border: 3px solid #CD7F32;
+        }
+
         .student-card {
             background: var(--white);
             border: var(--glass-border);
@@ -1774,9 +1879,18 @@ const htmlPlayground = `<!DOCTYPE html>
                 <h2>Bảng Vàng Tuyên Dương Thành Tích Xuất Sắc</h2>
                 <p>Nơi tôn vinh các con học sinh ưu tú đã bứt phá tư duy và gặt hái kết quả rực rỡ tại các trường chuyên lớp điểm Hà Nội</p>
             </div>
-            
+
+            <!-- Khối Vinh Danh Top 3 Nổi Bật Trên Cùng -->
+            <div id="honor-top3-container" class="podium-container" style="display: none; margin-bottom: 50px;">
+                <h3 class="podium-title">🏆 Gương Mặt Vàng Khối Luyện Thi Chuyên & Đỗ Điểm Cao 🏆</h3>
+                <div id="honor-top3-grid" class="podium-grid">
+                    <!-- Tải động học sinh Hạng 1, 2, 3 -->
+                </div>
+            </div>
+
+            <h3 id="honor-others-title" class="podium-title" style="display: none; font-size: 18px; margin-top: 40px; margin-bottom: 20px;">⭐ Học Sinh Tuyên Dương Thành Tích Xuất Sắc Khác ⭐</h3>
             <div id="honor-students-grid" class="students-grid">
-                <!-- Tải động danh sách vinh danh -->
+                <!-- Tải động danh sách vinh danh còn lại -->
             </div>
         </div>
 
@@ -2520,20 +2634,97 @@ const htmlPlayground = `<!DOCTYPE html>
                 .then(res => res.json())
                 .then(result => {
                     if (result.success) {
-                        const grid = document.getElementById('honor-students-grid');
-                        grid.innerHTML = '';
+                        const topGrid = document.getElementById('honor-top3-grid');
+                        const otherGrid = document.getElementById('honor-students-grid');
+                        const topContainer = document.getElementById('honor-top3-container');
+                        const othersTitle = document.getElementById('honor-others-title');
+
+                        topGrid.innerHTML = '';
+                        otherGrid.innerHTML = '';
+
+                        const top3 = [];
+                        const others = [];
+
                         result.data.forEach(s => {
-                            const avatar = s.avatar || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="%23E2E8F0"/><text x="50" y="55" font-family="sans-serif" font-size="24" text-anchor="middle" fill="%2364748B">' + s.name.charAt(0) + '</text></svg>';
-                            grid.innerHTML += '<div class="student-card">' +
-                                '<div class="student-badge-crown">Tuyên Dương ✓</div>' +
-                                '<div class="student-avatar">' +
-                                    '<img src="' + avatar + '">' +
-                                '</div>' +
-                                '<h3>' + s.name + '</h3>' +
-                                '<div class="student-class">' + s.class + ' | ' + s.year + '</div>' +
-                                '<div class="student-achievement">' + s.achievement + '</div>' +
-                            '</div>';
+                            const orderVal = s.order || 0;
+                            if (orderVal >= 1 && orderVal <= 3) {
+                                top3.push(s);
+                            } else {
+                                others.push(s);
+                            }
                         });
+
+                        // Sắp xếp top3 theo thứ tự chuẩn bục vinh danh: Hạng 2 -> Hạng 1 -> Hạng 3 (Hạng 1 đứng giữa tuyệt đẹp!)
+                        const sortedTop3 = [];
+                        const r1 = top3.find(s => s.order === 1);
+                        const r2 = top3.find(s => s.order === 2);
+                        const r3 = top3.find(s => s.order === 3);
+
+                        if (r2) sortedTop3.push(r2);
+                        if (r1) sortedTop3.push(r1);
+                        if (r3) sortedTop3.push(r3);
+
+                        // Trường hợp không có thứ tự chuẩn nhưng có top3
+                        if (sortedTop3.length === 0 && top3.length > 0) {
+                            top3.sort((a,b) => a.order - b.order);
+                            if (top3[1]) sortedTop3.push(top3[1]);
+                            if (top3[0]) sortedTop3.push(top3[0]);
+                            if (top3[2]) sortedTop3.push(top3[2]);
+                        }
+
+                        // Hiển thị Top 3
+                        if (sortedTop3.length > 0) {
+                            topContainer.style.display = 'block';
+                            sortedTop3.forEach(s => {
+                                const avatar = s.avatar || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="%23E2E8F0"/><text x="50" y="55" font-family="sans-serif" font-size="24" text-anchor="middle" fill="%2364748B">' + s.name.charAt(0) + '</text></svg>';
+                                let badgeText = 'Tuyên Dương ✓';
+                                let rankClass = 'rank-' + s.order;
+                                let badgeClass = 'badge-rank-' + s.order;
+
+                                if (s.order === 1) {
+                                    badgeText = '👑 THỦ KHOA BẢNG VÀNG';
+                                } else if (s.order === 2) {
+                                    badgeText = '🥈 Á KHOA BẢNG VÀNG';
+                                } else if (s.order === 3) {
+                                    badgeText = '🥉 HẠNG 3 BẢNG VÀNG';
+                                }
+
+                                topGrid.innerHTML += '<div class="podium-card ' + rankClass + '">' +
+                                    '<div class="student-badge-crown ' + badgeClass + '">' + badgeText + '</div>' +
+                                    '<div class="student-avatar">' +
+                                        '<img src="' + avatar + '">' +
+                                    '</div>' +
+                                    '<h3>' + s.name + '</h3>' +
+                                    '<div class="student-class">' + s.class + ' | ' + s.year + '</div>' +
+                                    '<div class="student-achievement">' + s.achievement + '</div>' +
+                                '</div>';
+                            });
+                        } else {
+                            topContainer.style.display = 'none';
+                        }
+
+                        // Hiển thị danh sách còn lại
+                        if (others.length > 0) {
+                            if (sortedTop3.length > 0) {
+                                othersTitle.style.display = 'block';
+                            } else {
+                                othersTitle.style.display = 'none';
+                            }
+                            others.forEach(s => {
+                                const avatar = s.avatar || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="%23E2E8F0"/><text x="50" y="55" font-family="sans-serif" font-size="24" text-anchor="middle" fill="%2364748B">' + s.name.charAt(0) + '</text></svg>';
+                                otherGrid.innerHTML += '<div class="student-card">' +
+                                    '<div class="student-badge-crown">Tuyên Dương ✓</div>' +
+                                    '<div class="student-avatar">' +
+                                        '<img src="' + avatar + '">' +
+                                    '</div>' +
+                                    '<h3>' + s.name + '</h3>' +
+                                    '<div class="student-class">' + s.class + ' | ' + s.year + '</div>' +
+                                    '<div class="student-achievement">' + s.achievement + '</div>' +
+                                '</div>';
+                            });
+                        } else {
+                            othersTitle.style.display = 'none';
+                        }
                     }
                 });
         }
