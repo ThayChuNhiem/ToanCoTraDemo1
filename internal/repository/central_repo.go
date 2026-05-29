@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"sync"
 	"time"
 	"toan-co-tra-backend/internal/domain"
@@ -229,6 +230,7 @@ func (r *CentralRepository) seedDefaultData() {
 			Year:        "Niên khóa 2024 - 2025",
 			Achievement: "Đỗ Chuyên Toán THCS chuyên Hà Nội - Amsterdam (Thủ khoa môn Toán)",
 			Avatar:      "",
+			Order:       1,
 		},
 		{
 			ID:          2,
@@ -237,6 +239,7 @@ func (r *CentralRepository) seedDefaultData() {
 			Year:        "Niên khóa 2024 - 2025",
 			Achievement: "Huy chương Vàng Olympic Toán Quốc tế TIMO & SASMO",
 			Avatar:      "",
+			Order:       2,
 		},
 		{
 			ID:          3,
@@ -245,6 +248,7 @@ func (r *CentralRepository) seedDefaultData() {
 			Year:        "Niên khóa 2024 - 2025",
 			Achievement: "Đỗ lớp chọn CLC THCS Cầu Giấy & THCS Thanh Xuân (Điểm Toán 9.75)",
 			Avatar:      "",
+			Order:       3,
 		},
 	}
 
@@ -487,8 +491,18 @@ func (r *CentralRepository) FindAllStudents() ([]*domain.Student, error) {
 			Year:        s.Year,
 			Achievement: s.Achievement,
 			Avatar:      s.Avatar,
+			Order:       s.Order,
 		}
 	}
+
+	// Sắp xếp danh sách học sinh theo thuộc tính Order tăng dần (số nhỏ xếp trước)
+	sort.Slice(copied, func(i, j int) bool {
+		if copied[i].Order != copied[j].Order {
+			return copied[i].Order < copied[j].Order
+		}
+		return copied[i].ID < copied[j].ID
+	})
+
 	return copied, nil
 }
 

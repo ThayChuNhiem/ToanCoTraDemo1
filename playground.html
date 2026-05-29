@@ -1769,23 +1769,29 @@
                         <div style="background-color: var(--bg-snowy); padding: 20px; border-radius: 12px; margin-bottom: 25px; border: var(--glass-border);">
                             <h4>Thêm Mới Học Sinh Vinh Danh</h4>
                             <form id="admin-form-add-student" style="margin-top: 15px;">
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
                                     <div class="form-group" style="margin-bottom: 10px;">
                                         <label>Họ tên học sinh</label>
-                                        <input type="text" id="new-stu-name" class="form-control" placeholder="Ví dụ: Lê Minh Trí" required>
+                                        <input type="text" id="new-stu-name" class="form-control" placeholder="Ví dụ: Lê Minh Trí" required style="font-size:12px; padding:6px 10px;">
                                     </div>
                                     <div class="form-group" style="margin-bottom: 10px;">
                                         <label>Lớp học tại trung tâm</label>
-                                        <input type="text" id="new-stu-class" class="form-control" placeholder="Ví dụ: Lớp 5 CLC" required>
+                                        <input type="text" id="new-stu-class" class="form-control" placeholder="Ví dụ: Lớp 5 CLC" required style="font-size:12px; padding:6px 10px;">
                                     </div>
                                     <div class="form-group" style="margin-bottom: 10px;">
                                         <label>Niên khóa</label>
-                                        <input type="text" id="new-stu-year" class="form-control" placeholder="Ví dụ: 2024 - 2025" required>
+                                        <input type="text" id="new-stu-year" class="form-control" placeholder="Ví dụ: 2024 - 2025" required style="font-size:12px; padding:6px 10px;">
+                                    </div>
+                                </div>
+                                <div style="display: grid; grid-template-columns: 100px 1fr; gap: 15px; margin-top: 5px;">
+                                    <div class="form-group" style="margin-bottom: 10px;">
+                                        <label>Thứ tự</label>
+                                        <input type="number" id="new-stu-order" class="form-control" value="1" required style="font-size:12px; padding:6px 10px; text-align: center;">
                                     </div>
                                     <div class="form-group" style="margin-bottom: 10px;">
                                         <label>Ảnh học sinh (Upload ảnh trực tiếp)</label>
                                         <div style="display: flex; gap: 10px; align-items: center;">
-                                            <input type="file" id="new-stu-avatar-file" class="form-control" accept="image/*">
+                                            <input type="file" id="new-stu-avatar-file" class="form-control" accept="image/*" style="font-size:11px; padding:4px;">
                                             <input type="hidden" id="new-stu-avatar-url">
                                         </div>
                                     </div>
@@ -1807,6 +1813,7 @@
                                     <th>Họ & Tên</th>
                                     <th>Lớp Học</th>
                                     <th>Niên Khóa</th>
+                                    <th>Thứ Tự</th>
                                     <th>Thành Tích Tuyên Dương</th>
                                     <th>Thao Tác</th>
                                 </tr>
@@ -2842,6 +2849,7 @@
                                 '<td style=\"font-weight: 700;\">' + s.name + '</td>' +
                                 '<td>' + s.class + '</td>' +
                                 '<td>' + s.year + '</td>' +
+                                '<td style=\"font-weight: 600;\">' + (s.order || 0) + '</td>' +
                                 '<td>' + s.achievement + '</td>' +
                                 '<td><button class=\"btn-delete-small\" onclick=\"deleteHonoredStudent(' + s.id + ')\">Xóa</button></td>' +
                             '</tr>';
@@ -2880,6 +2888,7 @@
             const name = document.getElementById('new-stu-name').value;
             const sClass = document.getElementById('new-stu-class').value;
             const year = document.getElementById('new-stu-year').value;
+            const order = parseInt(document.getElementById('new-stu-order').value) || 1;
             const achievement = document.getElementById('new-stu-achievement').value;
             const avatar = document.getElementById('new-stu-avatar-url').value;
 
@@ -2891,7 +2900,7 @@
                 },
                 body: JSON.stringify({
                     action: 'add',
-                    student_data: { name: name, class: sClass, year: year, achievement: achievement, avatar: avatar }
+                    student_data: { name: name, class: sClass, year: year, order: order, achievement: achievement, avatar: avatar }
                 })
             })
             .then(res => res.json())

@@ -8,6 +8,7 @@ type Student struct {
 	Year        string `json:"year"`        // Niên khóa vinh danh (e.g., 2024 - 2025)
 	Achievement string `json:"achievement"` // Thành tích đạt được (e.g., Đỗ chuyên Hà Nội - Amsterdam)
 	Avatar      string `json:"avatar"`      // Ảnh chân dung học sinh
+	Order       int    `json:"order"`       // Thứ tự hiển thị sắp xếp
 }
 
 // StudentRepository định nghĩa cách thức tương tác lưu trữ cho Học sinh tuyên dương
