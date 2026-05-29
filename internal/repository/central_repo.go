@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ type CentralRepository struct {
 	nextTeacherID int64
 	nextStudentID int64
 	nextGalleryID int64 // [MỚI] ID tự tăng của hình ảnh gallery
+	db            *sql.DB // Kết nối Postgres hoạt động thực tế
 }
 
 // NewCentralRepository khởi tạo CentralRepository
@@ -81,6 +83,200 @@ func NewCentralRepository(filePath string) *CentralRepository {
 	}
 
 	return repo
+}
+
+// SetPostgresDB cấu hình cơ sở dữ liệu thực tế và tự động khởi tạo bảng dữ liệu
+func (r *CentralRepository) SetPostgresDB(db *sql.DB) {
+	r.mu.Lock()
+	r.db = db
+	r.mu.Unlock()
+
+	// Khởi tạo cấu trúc bảng động
+	r.initPostgresSchema()
+}
+
+// initPostgresSchema tự động tạo các bảng SQL cần thiết
+func (r *CentralRepository) initPostgresSchema() {
+	if r.db == nil {
+		return
+	}
+
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS leads (
+			id SERIAL PRIMARY KEY,
+			parent_name VARCHAR(255) NOT NULL,
+			phone_number VARCHAR(50) NOT NULL,
+			student_name VARCHAR(255) NOT NULL,
+			grade INT NOT NULL,
+			learning_model VARCHAR(50) NOT NULL,
+			class_type VARCHAR(50) NOT NULL,
+			academic_performance VARCHAR(50) NOT NULL,
+			consulted_by VARCHAR(255) DEFAULT '',
+			status VARCHAR(50) NOT NULL DEFAULT 'pending',
+			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS classes (
+			id VARCHAR(255) PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			grade INT NOT NULL,
+			type VARCHAR(50) NOT NULL,
+			model VARCHAR(50) NOT NULL,
+			price VARCHAR(100) NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			is_popular BOOLEAN NOT NULL DEFAULT FALSE
+		)`,
+		`CREATE TABLE IF NOT EXISTS teachers (
+			id SERIAL PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			role VARCHAR(255) NOT NULL,
+			avatar VARCHAR(255) DEFAULT '',
+			bio TEXT NOT NULL DEFAULT '',
+			education VARCHAR(255) DEFAULT '',
+			display_order INT NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS students (
+			id SERIAL PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			class_name VARCHAR(255) NOT NULL,
+			academic_year VARCHAR(255) NOT NULL,
+			achievement TEXT NOT NULL,
+			avatar VARCHAR(255) DEFAULT '',
+			display_order INT NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS users (
+			username VARCHAR(255) PRIMARY KEY,
+			password VARCHAR(255) NOT NULL,
+			name VARCHAR(255) NOT NULL,
+			role VARCHAR(50) NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS gallery (
+			id SERIAL PRIMARY KEY,
+			url TEXT NOT NULL
+		)`,
+	}
+
+	for _, q := range queries {
+		if _, err := r.db.Exec(q); err != nil {
+			fmt.Printf("[ERROR] Không thể tạo bảng dữ liệu Postgres: %v\n", err)
+		}
+	}
+
+	r.seedPostgresDataIfEmpty()
+}
+
+// seedPostgresDataIfEmpty gieo hạt dữ liệu mẫu từ JSON mock sang Postgres nếu các bảng trống
+func (r *CentralRepository) seedPostgresDataIfEmpty() {
+	if r.db == nil {
+		return
+	}
+
+	var count int
+
+	// 1. Lớp học
+	_ = r.db.QueryRow("SELECT COUNT(*) FROM classes").Scan(&count)
+	if count == 0 {
+		r.mu.RLock()
+		classesCopy := make([]*domain.Class, len(r.store.Classes))
+		copy(classesCopy, r.store.Classes)
+		r.mu.RUnlock()
+
+		for _, c := range classesCopy {
+			_, _ = r.db.Exec(
+				"INSERT INTO classes (id, name, grade, type, model, price, description, is_popular) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+				c.ID, c.Name, c.Grade, c.Type, c.Model, c.Price, c.Desc, c.IsPopular,
+			)
+		}
+		fmt.Println("[POSTGRES] Khởi tạo gieo hạt (seed) danh sách lớp học thành công!")
+	}
+
+	// 2. Giáo viên
+	_ = r.db.QueryRow("SELECT COUNT(*) FROM teachers").Scan(&count)
+	if count == 0 {
+		r.mu.RLock()
+		teachersCopy := make([]*domain.Teacher, len(r.store.Teachers))
+		copy(teachersCopy, r.store.Teachers)
+		r.mu.RUnlock()
+
+		for _, t := range teachersCopy {
+			_, _ = r.db.Exec(
+				"INSERT INTO teachers (id, name, role, avatar, bio, education, display_order) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+				t.ID, t.Name, t.Role, t.Avatar, t.Bio, t.Education, t.Order,
+			)
+		}
+		_, _ = r.db.Exec("SELECT setval('teachers_id_seq', (SELECT MAX(id) FROM teachers))")
+		fmt.Println("[POSTGRES] Khởi tạo gieo hạt (seed) danh sách giảng viên thành công!")
+	}
+
+	// 3. Học sinh bảng vàng
+	_ = r.db.QueryRow("SELECT COUNT(*) FROM students").Scan(&count)
+	if count == 0 {
+		r.mu.RLock()
+		studentsCopy := make([]*domain.Student, len(r.store.Students))
+		copy(studentsCopy, r.store.Students)
+		r.mu.RUnlock()
+
+		for _, s := range studentsCopy {
+			_, _ = r.db.Exec(
+				"INSERT INTO students (id, name, class_name, academic_year, achievement, avatar, display_order) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+				s.ID, s.Name, s.Class, s.Year, s.Achievement, s.Avatar, s.Order,
+			)
+		}
+		_, _ = r.db.Exec("SELECT setval('students_id_seq', (SELECT MAX(id) FROM students))")
+		fmt.Println("[POSTGRES] Khởi tạo gieo hạt (seed) danh sách học sinh bảng vàng thành công!")
+	}
+
+	// 4. Tài khoản người dùng
+	_ = r.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	if count == 0 {
+		r.mu.RLock()
+		usersCopy := make([]*domain.User, len(r.store.Users))
+		copy(usersCopy, r.store.Users)
+		r.mu.RUnlock()
+
+		for _, u := range usersCopy {
+			_, _ = r.db.Exec(
+				"INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4)",
+				u.Username, u.Password, u.Name, u.Role,
+			)
+		}
+		fmt.Println("[POSTGRES] Khởi tạo gieo hạt (seed) danh sách tài khoản thành công!")
+	}
+
+	// 5. Leads đăng ký tư vấn
+	_ = r.db.QueryRow("SELECT COUNT(*) FROM leads").Scan(&count)
+	if count == 0 {
+		r.mu.RLock()
+		leadsCopy := make([]*domain.Lead, len(r.store.Leads))
+		copy(leadsCopy, r.store.Leads)
+		r.mu.RUnlock()
+
+		for _, l := range leadsCopy {
+			_, _ = r.db.Exec(
+				"INSERT INTO leads (id, parent_name, phone_number, student_name, grade, learning_model, class_type, academic_performance, consulted_by, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+				l.ID, l.ParentName, l.PhoneNumber, l.StudentName, l.Grade, l.LearningModel, l.ClassType, l.AcademicPerformance, l.ConsultedBy, l.Status, l.CreatedAt,
+			)
+		}
+		_, _ = r.db.Exec("SELECT setval('leads_id_seq', (SELECT MAX(id) FROM leads))")
+		fmt.Println("[POSTGRES] Khởi tạo gieo hạt (seed) danh sách leads tư vấn thành công!")
+	}
+
+	// 6. Hình ảnh lớp học
+	_ = r.db.QueryRow("SELECT COUNT(*) FROM gallery").Scan(&count)
+	if count == 0 {
+		r.mu.RLock()
+		galleryCopy := make([]*domain.GalleryImage, len(r.store.Gallery))
+		copy(galleryCopy, r.store.Gallery)
+		r.mu.RUnlock()
+
+		for _, g := range galleryCopy {
+			_, _ = r.db.Exec(
+				"INSERT INTO gallery (id, url) VALUES ($1, $2)",
+				g.ID, g.URL,
+			)
+		}
+		_, _ = r.db.Exec("SELECT setval('gallery_id_seq', (SELECT MAX(id) FROM gallery))")
+		fmt.Println("[POSTGRES] Khởi tạo gieo hạt (seed) danh ảnh lớp học thành công!")
+	}
 }
 
 // load tải dữ liệu từ tệp tin JSON
@@ -345,6 +541,15 @@ func (r *CentralRepository) seedDefaultData() {
 // -----------------------------------------------------------------------------
 
 func (r *CentralRepository) Save(lead *domain.Lead) error {
+	if r.db != nil {
+		query := `INSERT INTO leads (parent_name, phone_number, student_name, grade, learning_model, class_type, academic_performance, status, created_at)
+		          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`
+		lead.Status = "pending"
+		lead.CreatedAt = time.Now()
+		err := r.db.QueryRow(query, lead.ParentName, lead.PhoneNumber, lead.StudentName, lead.Grade, lead.LearningModel, lead.ClassType, lead.AcademicPerformance, lead.Status, lead.CreatedAt).Scan(&lead.ID)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -358,6 +563,23 @@ func (r *CentralRepository) Save(lead *domain.Lead) error {
 }
 
 func (r *CentralRepository) FindAll() ([]*domain.Lead, error) {
+	if r.db != nil {
+		rows, err := r.db.Query("SELECT id, parent_name, phone_number, student_name, grade, learning_model, class_type, academic_performance, consulted_by, status, created_at FROM leads ORDER BY created_at DESC")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var leads []*domain.Lead
+		for rows.Next() {
+			var l domain.Lead
+			if err := rows.Scan(&l.ID, &l.ParentName, &l.PhoneNumber, &l.StudentName, &l.Grade, &l.LearningModel, &l.ClassType, &l.AcademicPerformance, &l.ConsultedBy, &l.Status, &l.CreatedAt); err != nil {
+				return nil, err
+			}
+			leads = append(leads, &l)
+		}
+		return leads, nil
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -382,6 +604,16 @@ func (r *CentralRepository) FindAll() ([]*domain.Lead, error) {
 }
 
 func (r *CentralRepository) UpdateStatus(id int64, status string, consultedBy string) error {
+	if r.db != nil {
+		var err error
+		if status == "pending" {
+			_, err = r.db.Exec("UPDATE leads SET status = $1, consulted_by = '' WHERE id = $2", status, id)
+		} else {
+			_, err = r.db.Exec("UPDATE leads SET status = $1, consulted_by = $2 WHERE id = $3", status, consultedBy, id)
+		}
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -403,6 +635,23 @@ func (r *CentralRepository) UpdateStatus(id int64, status string, consultedBy st
 // -----------------------------------------------------------------------------
 
 func (r *CentralRepository) FindAllClasses() ([]*domain.Class, error) {
+	if r.db != nil {
+		rows, err := r.db.Query("SELECT id, name, grade, type, model, price, description, is_popular FROM classes ORDER BY grade ASC, id ASC")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var classes []*domain.Class
+		for rows.Next() {
+			var c domain.Class
+			if err := rows.Scan(&c.ID, &c.Name, &c.Grade, &c.Type, &c.Model, &c.Price, &c.Desc, &c.IsPopular); err != nil {
+				return nil, err
+			}
+			classes = append(classes, &c)
+		}
+		return classes, nil
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -423,6 +672,11 @@ func (r *CentralRepository) FindAllClasses() ([]*domain.Class, error) {
 }
 
 func (r *CentralRepository) UpdatePrice(id string, price string) error {
+	if r.db != nil {
+		_, err := r.db.Exec("UPDATE classes SET price = $1 WHERE id = $2", price, id)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -440,6 +694,23 @@ func (r *CentralRepository) UpdatePrice(id string, price string) error {
 // -----------------------------------------------------------------------------
 
 func (r *CentralRepository) FindAllTeachers() ([]*domain.Teacher, error) {
+	if r.db != nil {
+		rows, err := r.db.Query("SELECT id, name, role, avatar, bio, education, display_order FROM teachers ORDER BY display_order ASC, id ASC")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var teachers []*domain.Teacher
+		for rows.Next() {
+			var t domain.Teacher
+			if err := rows.Scan(&t.ID, &t.Name, &t.Role, &t.Avatar, &t.Bio, &t.Education, &t.Order); err != nil {
+				return nil, err
+			}
+			teachers = append(teachers, &t)
+		}
+		return teachers, nil
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -459,6 +730,13 @@ func (r *CentralRepository) FindAllTeachers() ([]*domain.Teacher, error) {
 }
 
 func (r *CentralRepository) SaveTeacher(teacher *domain.Teacher) error {
+	if r.db != nil {
+		query := `INSERT INTO teachers (name, role, avatar, bio, education, display_order)
+		          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
+		err := r.db.QueryRow(query, teacher.Name, teacher.Role, teacher.Avatar, teacher.Bio, teacher.Education, teacher.Order).Scan(&teacher.ID)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -469,6 +747,18 @@ func (r *CentralRepository) SaveTeacher(teacher *domain.Teacher) error {
 }
 
 func (r *CentralRepository) UpdateTeacher(teacher *domain.Teacher) error {
+	if r.db != nil {
+		var err error
+		if teacher.Avatar != "" {
+			query := `UPDATE teachers SET name = $1, role = $2, avatar = $3, bio = $4, education = $5, display_order = $6 WHERE id = $7`
+			_, err = r.db.Exec(query, teacher.Name, teacher.Role, teacher.Avatar, teacher.Bio, teacher.Education, teacher.Order, teacher.ID)
+		} else {
+			query := `UPDATE teachers SET name = $1, role = $2, bio = $3, education = $4, display_order = $5 WHERE id = $6`
+			_, err = r.db.Exec(query, teacher.Name, teacher.Role, teacher.Bio, teacher.Education, teacher.Order, teacher.ID)
+		}
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -489,6 +779,14 @@ func (r *CentralRepository) UpdateTeacher(teacher *domain.Teacher) error {
 }
 
 func (r *CentralRepository) DeleteTeacher(id int64) error {
+	if r.db != nil {
+		if id == 1 {
+			return errors.New("không thể xóa tài khoản sáng lập của Cô Giáo Trà")
+		}
+		_, err := r.db.Exec("DELETE FROM teachers WHERE id = $1", id)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -518,6 +816,23 @@ func (r *CentralRepository) DeleteTeacher(id int64) error {
 // -----------------------------------------------------------------------------
 
 func (r *CentralRepository) FindAllStudents() ([]*domain.Student, error) {
+	if r.db != nil {
+		rows, err := r.db.Query("SELECT id, name, class_name, academic_year, achievement, avatar, display_order FROM students ORDER BY display_order ASC, id ASC")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var students []*domain.Student
+		for rows.Next() {
+			var s domain.Student
+			if err := rows.Scan(&s.ID, &s.Name, &s.Class, &s.Year, &s.Achievement, &s.Avatar, &s.Order); err != nil {
+				return nil, err
+			}
+			students = append(students, &s)
+		}
+		return students, nil
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -546,6 +861,13 @@ func (r *CentralRepository) FindAllStudents() ([]*domain.Student, error) {
 }
 
 func (r *CentralRepository) SaveStudent(student *domain.Student) error {
+	if r.db != nil {
+		query := `INSERT INTO students (name, class_name, academic_year, achievement, avatar, display_order)
+		          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
+		err := r.db.QueryRow(query, student.Name, student.Class, student.Year, student.Achievement, student.Avatar, student.Order).Scan(&student.ID)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -556,6 +878,11 @@ func (r *CentralRepository) SaveStudent(student *domain.Student) error {
 }
 
 func (r *CentralRepository) DeleteStudent(id int64) error {
+	if r.db != nil {
+		_, err := r.db.Exec("DELETE FROM students WHERE id = $1", id)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -580,6 +907,18 @@ func (r *CentralRepository) DeleteStudent(id int64) error {
 // -----------------------------------------------------------------------------
 
 func (r *CentralRepository) FindUser(username string) (*domain.User, error) {
+	if r.db != nil {
+		var u domain.User
+		err := r.db.QueryRow("SELECT username, password, name, role FROM users WHERE username = $1", username).Scan(&u.Username, &u.Password, &u.Name, &u.Role)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return nil, errors.New("tên tài khoản đăng nhập không tồn tại")
+			}
+			return nil, err
+		}
+		return &u, nil
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -597,6 +936,16 @@ func (r *CentralRepository) FindUser(username string) (*domain.User, error) {
 }
 
 func (r *CentralRepository) SaveUser(user *domain.User) error {
+	if r.db != nil {
+		var exists bool
+		_ = r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", user.Username).Scan(&exists)
+		if exists {
+			return errors.New("tên tài khoản đăng nhập đã tồn tại trên hệ thống")
+		}
+		_, err := r.db.Exec("INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4)", user.Username, user.Password, user.Name, user.Role)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -612,6 +961,23 @@ func (r *CentralRepository) SaveUser(user *domain.User) error {
 }
 
 func (r *CentralRepository) FindAllUsers() ([]*domain.User, error) {
+	if r.db != nil {
+		rows, err := r.db.Query("SELECT username, name, role FROM users ORDER BY username ASC")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var users []*domain.User
+		for rows.Next() {
+			var u domain.User
+			if err := rows.Scan(&u.Username, &u.Name, &u.Role); err != nil {
+				return nil, err
+			}
+			users = append(users, &u)
+		}
+		return users, nil
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -627,6 +993,14 @@ func (r *CentralRepository) FindAllUsers() ([]*domain.User, error) {
 }
 
 func (r *CentralRepository) DeleteUser(username string) error {
+	if r.db != nil {
+		if username == "admin1" {
+			return errors.New("không thể xóa tài khoản quản trị tối cao của Admin")
+		}
+		_, err := r.db.Exec("DELETE FROM users WHERE username = $1", username)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -651,6 +1025,17 @@ func (r *CentralRepository) DeleteUser(username string) error {
 }
 
 func (r *CentralRepository) SaveClass(class *domain.Class) error {
+	if r.db != nil {
+		var exists bool
+		_ = r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM classes WHERE id = $1)", class.ID).Scan(&exists)
+		if exists {
+			return errors.New("mã lớp học này đã tồn tại trên hệ thống")
+		}
+		_, err := r.db.Exec("INSERT INTO classes (id, name, grade, type, model, price, description, is_popular) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+			class.ID, class.Name, class.Grade, class.Type, class.Model, class.Price, class.Desc, class.IsPopular)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -665,6 +1050,12 @@ func (r *CentralRepository) SaveClass(class *domain.Class) error {
 }
 
 func (r *CentralRepository) UpdateClass(class *domain.Class) error {
+	if r.db != nil {
+		_, err := r.db.Exec("UPDATE classes SET name = $1, grade = $2, type = $3, model = $4, price = $5, description = $6, is_popular = $7 WHERE id = $8",
+			class.Name, class.Grade, class.Type, class.Model, class.Price, class.Desc, class.IsPopular, class.ID)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -684,6 +1075,11 @@ func (r *CentralRepository) UpdateClass(class *domain.Class) error {
 }
 
 func (r *CentralRepository) DeleteClass(id string) error {
+	if r.db != nil {
+		_, err := r.db.Exec("DELETE FROM classes WHERE id = $1", id)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -708,6 +1104,23 @@ func (r *CentralRepository) DeleteClass(id string) error {
 // -----------------------------------------------------------------------------
 
 func (r *CentralRepository) FindAllImages() ([]*domain.GalleryImage, error) {
+	if r.db != nil {
+		rows, err := r.db.Query("SELECT id, url FROM gallery ORDER BY id ASC")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var images []*domain.GalleryImage
+		for rows.Next() {
+			var g domain.GalleryImage
+			if err := rows.Scan(&g.ID, &g.URL); err != nil {
+				return nil, err
+			}
+			images = append(images, &g)
+		}
+		return images, nil
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -722,6 +1135,12 @@ func (r *CentralRepository) FindAllImages() ([]*domain.GalleryImage, error) {
 }
 
 func (r *CentralRepository) SaveImage(img *domain.GalleryImage) error {
+	if r.db != nil {
+		query := `INSERT INTO gallery (url) VALUES ($1) RETURNING id`
+		err := r.db.QueryRow(query, img.URL).Scan(&img.ID)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -732,6 +1151,11 @@ func (r *CentralRepository) SaveImage(img *domain.GalleryImage) error {
 }
 
 func (r *CentralRepository) DeleteImage(id int64) error {
+	if r.db != nil {
+		_, err := r.db.Exec("DELETE FROM gallery WHERE id = $1", id)
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

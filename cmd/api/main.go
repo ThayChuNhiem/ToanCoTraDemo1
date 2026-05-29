@@ -259,9 +259,15 @@ func main() {
 	fmt.Printf("   tích hợp 5 Phân Hệ động: Trang Chủ, Giới Thiệu, Vinh Danh, Sales & Admin!\n")
 	fmt.Printf("===========================================================\n\n")
 
-	// Fallback to start a dummy DB check in a background goroutine to prevent blocking server start
+	// Cố gắng kết nối cơ sở dữ liệu PostgreSQL thực tế
 	go func() {
-		_, _ = database.NewPostgresConnection(cfg.DatabaseURL)
+		pgDB, err := database.NewPostgresConnection(cfg.DatabaseURL)
+		if err != nil {
+			log.Warn("⚠️  Không thể kết nối đến Postgres (" + err.Error() + "). Hệ thống tự động kích hoạt chế độ Fallback sử dụng tệp lưu trữ database_mock.json!")
+			return
+		}
+		log.Info("✅ ĐÃ KẾT NỐI THÀNH CÔNG VỚI CSDL POSTGRESQL CHUYÊN NGHIỆP!")
+		repo.SetPostgresDB(pgDB.Pool)
 	}()
 	fmt.Printf("[INFO] Trạng thái: database_mock.json đã sẵn sàng tự động đồng bộ hóa an toàn.\n")
 
