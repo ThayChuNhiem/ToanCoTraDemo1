@@ -21,8 +21,8 @@ func LoadConfig() *Config {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		// Mặc định chạy in-memory fallback nếu không có DB thật được cung cấp
-		dbURL = "postgres://postgres:postgres@localhost:5432/toan_co_tra?sslmode=disable"
+		// Mặc định chạy CSDL Postgres đám mây Neon thực tế nếu không có biến môi trường
+		dbURL = "postgresql://neondb_owner:npg_JkyIHBd7l4YX@ep-spring-field-aqpgqquh.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require"
 	}
 
 	jwtSecret := os.Getenv("JWT_SECRET")
