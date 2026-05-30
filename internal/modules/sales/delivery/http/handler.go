@@ -127,7 +127,18 @@ func (h *SalesHandler) ToggleConsulted(w http.ResponseWriter, r *http.Request) {
 		newStatus = "pending"
 	}
 
-	err = h.uc.UpdateLeadStatus(req.ID, newStatus, session.Username)
+	consultedBy := ""
+	if newStatus == "contacted" {
+		// Lấy họ và tên đầy đủ của người dùng thay vì tên đăng nhập
+		u, err := h.repo.FindUser(session.Username)
+		if err == nil && u != nil {
+			consultedBy = u.Name
+		} else {
+			consultedBy = session.Username // Fallback
+		}
+	}
+
+	err = h.uc.UpdateLeadStatus(req.ID, newStatus, consultedBy)
 	if err != nil {
 		h.writeJSONError(w, http.StatusInternalServerError, "Lỗi khi cập nhật trạng thái tư vấn")
 		return
@@ -135,10 +146,7 @@ func (h *SalesHandler) ToggleConsulted(w http.ResponseWriter, r *http.Request) {
 
 	// Đẩy trạng thái cập nhật qua SSE tới các màn hình sales khác đang xem
 	found.Status = newStatus
-	found.ConsultedBy = session.Username
-	if newStatus == "pending" {
-		found.ConsultedBy = ""
-	}
+	found.ConsultedBy = consultedBy
 	h.dispatcher.Publish("registration.updated", found)
 
 

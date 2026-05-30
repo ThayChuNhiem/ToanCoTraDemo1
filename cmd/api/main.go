@@ -3009,7 +3009,15 @@ const htmlPlayground = `<!DOCTYPE html>
                 const perfText = l.academic_performance === 'excellent' ? '🏆 Giỏi/Xuất sắc' : l.academic_performance === 'good' ? '✨ Học lực Khá' : '📚 Học lực TB';
                 
                 // Audit tag if consulted
-                const auditText = (isContacted && l.consulted_by) ? '<span style="background: rgba(16, 185, 129, 0.1); color: var(--accent-green); font-weight: 600; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">Đã tư vấn bởi: ' + l.consulted_by + '</span>' : '';
+                let displayName = l.consulted_by || '';
+                if (displayName === 'teacher1') {
+                    displayName = 'Cô Giáo Trà';
+                } else if (displayName === 'admin1') {
+                    displayName = 'Quản trị viên tối cao';
+                } else if (displayName === 'lien288') {
+                    displayName = 'Cô Liên';
+                }
+                const auditText = (isContacted && displayName) ? '<span style="background: rgba(16, 185, 129, 0.1); color: var(--accent-green); font-weight: 600; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">Đã tư vấn bởi: ' + displayName + '</span>' : '';
 
                 container.innerHTML += '<div class="lead-card ' + contactedClass + '">' +
                     '<div class="lead-info-left">' +
