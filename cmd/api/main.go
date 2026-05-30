@@ -1698,8 +1698,15 @@ const htmlPlayground = `<!DOCTYPE html>
             }
             
             .podium-card.rank-1 {
+                order: 1;
                 transform: scale(1) !important;
                 margin-top: 20px;
+            }
+            .podium-card.rank-2 {
+                order: 2;
+            }
+            .podium-card.rank-3 {
+                order: 3;
             }
 
             .podium-card.rank-1:hover {
