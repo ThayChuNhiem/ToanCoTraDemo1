@@ -619,6 +619,17 @@ const htmlPlayground = `<!DOCTYPE html>
             transition: transform 0.4s ease;
         }
 
+        /* Hiệu ứng Premium Blur-up & Fade-in khi tải ảnh Lazy */
+        .lazy-image {
+            opacity: 0;
+            filter: blur(15px);
+            transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), filter 0.8s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        }
+        .lazy-image.loaded {
+            opacity: 1;
+            filter: blur(0);
+        }
+
         .gallery-card:hover {
             transform: translateY(-5px);
             box-shadow: 0 12px 24px rgba(0,0,0,0.15);
@@ -1876,7 +1887,7 @@ const htmlPlayground = `<!DOCTYPE html>
                 </div>
                 <div class="billboard-image-container">
                     <div class="image-starry-frame">
-                        <img src="/assets/cotra.jpg" alt="Chân dung Cô Trà">
+                        <img src="/assets/cotra.jpg" alt="Chân dung Cô Trà" loading="lazy" class="lazy-image" onload="this.classList.add('loaded')">
                         <div class="tag-hybrid">Hybrid Learning</div>
                     </div>
                 </div>
@@ -1959,7 +1970,7 @@ const htmlPlayground = `<!DOCTYPE html>
         <div id="tab-about" class="tab-panel">
             <div class="cotra-bio-section reveal-on-scroll">
                 <div class="bio-avatar">
-                    <img id="about-cotra-img" src="/assets/cotra.jpg" alt="Cô Trà Sáng Lập">
+                    <img id="about-cotra-img" src="/assets/cotra.jpg" alt="Cô Trà Sáng Lập" loading="lazy" class="lazy-image" onload="this.classList.add('loaded')">
                 </div>
                 <div class="bio-info">
                     <h2>Giới Thiệu Cô Trà Sáng Lập</h2>
@@ -2452,6 +2463,85 @@ const htmlPlayground = `<!DOCTYPE html>
         let currentModel = 'online';
         let currentClassType = 'basic';
         let currentPerformance = 'good';
+
+        // Hàm tiện ích nén ảnh client-side sang định dạng WebP hiện đại siêu nhẹ trước khi tải lên server
+        function compressAndUploadImage(file, headers, onSuccess, onError) {
+            if (!file.type.startsWith('image/')) {
+                const formData = new FormData();
+                formData.append('file', file);
+                uploadFormData(formData, headers, onSuccess, onError);
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    const MAX_WIDTH = 1200;
+                    const MAX_HEIGHT = 1200;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height = Math.round((height * MAX_WIDTH) / width);
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width = Math.round((width * MAX_HEIGHT) / height);
+                            height = MAX_HEIGHT;
+                        }
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    let type = 'image/webp';
+                    canvas.toBlob(function(blob) {
+                        if (!blob) {
+                            canvas.toBlob(function(jpegBlob) {
+                                sendBlob(jpegBlob, file.name.replace(/\.[^/.]+$/, "") + ".jpg");
+                            }, 'image/jpeg', 0.82);
+                        } else {
+                            sendBlob(blob, file.name.replace(/\.[^/.]+$/, "") + ".webp");
+                        }
+                    }, type, 0.82);
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+
+            function sendBlob(blob, filename) {
+                const formData = new FormData();
+                formData.append('file', blob, filename);
+                uploadFormData(formData, headers, onSuccess, onError);
+            }
+        }
+
+        function uploadFormData(formData, headers, onSuccess, onError) {
+            fetch('/api/v1/admin/upload', {
+                method: 'POST',
+                headers: headers,
+                body: formData
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    onSuccess(result);
+                } else {
+                    onError(result.error);
+                }
+            })
+            .catch(err => {
+                console.error('Lỗi tải ảnh:', err);
+                onError('Có lỗi xảy ra khi tải ảnh lên.');
+            });
+        }
         
         // Unified Authentication State Variables
         let authToken = localStorage.getItem('auth_token') || '';
@@ -2721,13 +2811,13 @@ const htmlPlayground = `<!DOCTYPE html>
                             const avatar = t.avatar || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="90" height="90" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="%23E2E8F0"/><text x="50" y="55" font-family="sans-serif" font-size="24" text-anchor="middle" fill="%2364748B">' + t.name.charAt(0) + '</text></svg>';
                             grid.innerHTML += '<div class="teacher-card">' +
                                 '<div class="teacher-avatar-circle">' +
-                                    '<img src="' + avatar + '" alt="' + t.name + '">' +
+                                    '<img src="' + avatar + '" alt="' + t.name + '" loading="lazy" class="lazy-image" onload="this.classList.add(\'loaded\')">' +
                                 '</div>' +
                                 '<h3>' + t.name + '</h3>' +
                                 '<h5>' + t.role + '</h5>' +
                                 '<div class="teacher-edu">' + t.education + '</div>' +
                                 '<p class="teacher-bio">' + t.bio + '</p>' +
-                            '</div>';
+                                '</div>';
                         });
                     }
                 });
@@ -2797,7 +2887,7 @@ const htmlPlayground = `<!DOCTYPE html>
                                 topGrid.innerHTML += '<div class="podium-card ' + rankClass + '">' +
                                     '<div class="student-badge-crown ' + badgeClass + '">' + badgeText + '</div>' +
                                     '<div class="student-avatar">' +
-                                        '<img src="' + avatar + '">' +
+                                        '<img src="' + avatar + '" loading="lazy" class="lazy-image" onload="this.classList.add(\'loaded\')">' +
                                     '</div>' +
                                     '<h3>' + s.name + '</h3>' +
                                     '<div class="student-class">' + s.class + ' | ' + s.year + '</div>' +
@@ -2820,7 +2910,7 @@ const htmlPlayground = `<!DOCTYPE html>
                                 otherGrid.innerHTML += '<div class="student-card">' +
                                     '<div class="student-badge-crown">Tuyên Dương ✓</div>' +
                                     '<div class="student-avatar">' +
-                                        '<img src="' + avatar + '">' +
+                                        '<img src="' + avatar + '" loading="lazy" class="lazy-image" onload="this.classList.add(\'loaded\')">' +
                                     '</div>' +
                                     '<h3>' + s.name + '</h3>' +
                                     '<div class="student-class">' + s.class + ' | ' + s.year + '</div>' +
@@ -3340,23 +3430,17 @@ const htmlPlayground = `<!DOCTYPE html>
             const file = e.target.files[0];
             if (!file) return;
 
-            const formData = new FormData();
-            formData.append('file', file);
-
-            fetch('/api/v1/admin/upload', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + authToken },
-                body: formData
-            })
-            .then(res => res.json())
-            .then(result => {
-                if (result.success) {
+            compressAndUploadImage(
+                file,
+                { 'Authorization': 'Bearer ' + authToken },
+                function(result) {
                     document.getElementById('teacher-avatar-url').value = result.url;
                     alert('Tải ảnh đại diện giáo viên thành công!');
-                } else {
-                    alert(result.error);
+                },
+                function(err) {
+                    alert(err);
                 }
-            });
+            );
         };
 
         // Manage teacher save form
@@ -3444,24 +3528,18 @@ const htmlPlayground = `<!DOCTYPE html>
             const file = e.target.files[0];
             if (!file) return;
 
-            const formData = new FormData();
-            formData.append('file', file);
-
-            fetch('/api/v1/admin/upload', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + authToken },
-                body: formData
-            })
-            .then(res => res.json())
-            .then(result => {
-                if (result.success) {
+            compressAndUploadImage(
+                file,
+                { 'Authorization': 'Bearer ' + authToken },
+                function(result) {
                     document.getElementById('admin-cotra-avatar-url').value = result.url;
                     document.getElementById('admin-cotra-avatar-preview').src = result.url;
                     alert('Tải ảnh đại diện Cô Trà hoàn tất!');
-                } else {
-                    alert('Lỗi upload ảnh: ' + result.error);
+                },
+                function(err) {
+                    alert('Lỗi upload ảnh: ' + err);
                 }
-            });
+            );
         };
 
         // Update Co Tra bio
@@ -3521,23 +3599,17 @@ const htmlPlayground = `<!DOCTYPE html>
             const file = e.target.files[0];
             if (!file) return;
 
-            const formData = new FormData();
-            formData.append('file', file);
-
-            fetch('/api/v1/admin/upload', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + authToken },
-                body: formData
-            })
-            .then(res => res.json())
-            .then(result => {
-                if (result.success) {
+            compressAndUploadImage(
+                file,
+                { 'Authorization': 'Bearer ' + authToken },
+                function(result) {
                     document.getElementById('new-stu-avatar-url').value = result.url;
                     alert('Tải ảnh chân dung học sinh thành công!');
-                } else {
-                    alert(result.error);
+                },
+                function(err) {
+                    alert(err);
                 }
-            });
+            );
         };
 
         // Add honored student
@@ -3622,7 +3694,7 @@ const htmlPlayground = `<!DOCTYPE html>
 
                         result.data.forEach(img => {
                             grid.innerHTML += '<div class="gallery-card">' +
-                                '<img src="' + img.url + '" alt="Hình ảnh hoạt động lớp học">' +
+                                '<img src="' + img.url + '" alt="Hình ảnh hoạt động lớp học" loading="lazy" class="lazy-image" onload="this.classList.add(\'loaded\')">' +
                             '</div>';
                         });
                     }
@@ -3663,27 +3735,17 @@ const htmlPlayground = `<!DOCTYPE html>
             const file = e.target.files[0];
             if (!file) return;
 
-            const formData = new FormData();
-            formData.append('file', file);
-
-            fetch('/api/v1/admin/upload', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + authToken },
-                body: formData
-            })
-            .then(res => res.json())
-            .then(result => {
-                if (result.success) {
+            compressAndUploadImage(
+                file,
+                { 'Authorization': 'Bearer ' + authToken },
+                function(result) {
                     document.getElementById('new-gallery-url').value = result.url;
                     alert('Tải ảnh hoạt động lên thành công!');
-                } else {
-                    alert('Lỗi tải ảnh: ' + result.error);
+                },
+                function(err) {
+                    alert('Lỗi tải ảnh: ' + err);
                 }
-            })
-            .catch(err => {
-                console.error('Error uploading file:', err);
-                alert('Có lỗi xảy ra khi tải ảnh lên.');
-            });
+            );
         };
 
         // Add Gallery Image Submit
