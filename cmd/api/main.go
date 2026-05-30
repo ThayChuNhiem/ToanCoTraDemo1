@@ -2564,7 +2564,7 @@ const htmlPlayground = `<!DOCTYPE html>
                 
                 if (authRole === 'admin') {
                     liAdmin.style.display = 'inline-block';
-                    liSales.style.display = 'none';
+                    liSales.style.display = 'inline-block'; // Admin có quyền quản trị cả phân hệ Sales
                 } else if (authRole === 'teacher') {
                     liSales.style.display = 'inline-block';
                     liAdmin.style.display = 'none';
