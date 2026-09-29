@@ -1,5 +1,8 @@
 # Hệ Thống Backend Toán Cô Trà (TCT) - Kiến Trúc Sạch (Clean Architecture)
 
+![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)
+![Architecture](https://img.shields.io/badge/Architecture-Clean--Architecture-10B981)
+
 Hệ thống quản lý lớp học và tư vấn tuyển sinh Toán tư duy liên cấp **Toán Cô Trà** được tái cấu trúc hoàn chỉnh theo mô hình **Clean Architecture (Kiến Trúc Sạch)** chuẩn hóa bằng ngôn ngữ Go (Golang). Dự án tích hợp trang Landing Page giới thiệu kết hợp ứng dụng Quản trị Sales thời gian thực (SPA) và cổng tương tác với chatbot.
 
 ---
