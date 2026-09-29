@@ -23,6 +23,11 @@ Hệ thống quản lý lớp học và tư vấn tuyển sinh Toán tư duy li�
 5. **Giới Hạn Tần Suất Truy Cập (Token Bucket Rate Limiter)**:
    - Bảo vệ hệ thống khỏi tấn công DDoS và spam form đăng ký bằng cách giới hạn số lượng request từ mỗi địa chỉ IP của Client một cách thông minh.
 
+6. **Xuất & Nhập Danh Sách Excel (.xlsx) Chuyên Nghiệp**:
+   - Tích hợp thư viện Excelize v2 xử lý bảng tính Excel tốc độ cao.
+   - Hỗ trợ tải file mẫu chuẩn, xuất danh sách lớp học và học sinh.
+   - Tự động kiểm tra tính hợp lệ dữ liệu (SĐT Việt Nam, khối lớp, loại lớp) và thực hiện Batch Upsert vào hệ thống.
+
 ---
 
 ## 📂 Sơ Đồ Cấu Trúc Thư Mục
