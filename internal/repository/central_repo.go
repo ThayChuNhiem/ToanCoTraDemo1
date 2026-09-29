@@ -1175,3 +1175,133 @@ func (r *CentralRepository) DeleteImage(id int64) error {
 	return r.save()
 }
 
+// -----------------------------------------------------------------------------
+// BATCH OPERATIONS CHO TÍNH NĂNG NHẬP EXCEL
+// -----------------------------------------------------------------------------
+
+// BatchUpsertClasses chèn mới hoặc cập nhật hàng loạt lớp học từ Excel
+func (r *CentralRepository) BatchUpsertClasses(classes []*domain.Class) (int, int, error) {
+	if r.db != nil {
+		tx, err := r.db.Begin()
+		if err != nil {
+			return 0, 0, err
+		}
+		defer tx.Rollback()
+
+		inserted := 0
+		updated := 0
+
+		for _, c := range classes {
+			var exists bool
+			err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM classes WHERE id = $1)", c.ID).Scan(&exists)
+			if err != nil {
+				return 0, 0, err
+			}
+
+			if exists {
+				_, err = tx.Exec("UPDATE classes SET name = $1, grade = $2, type = $3, model = $4, price = $5, description = $6, is_popular = $7 WHERE id = $8",
+					c.Name, c.Grade, c.Type, c.Model, c.Price, c.Desc, c.IsPopular, c.ID)
+				if err != nil {
+					return 0, 0, err
+				}
+				updated++
+			} else {
+				_, err = tx.Exec("INSERT INTO classes (id, name, grade, type, model, price, description, is_popular) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+					c.ID, c.Name, c.Grade, c.Type, c.Model, c.Price, c.Desc, c.IsPopular)
+				if err != nil {
+					return 0, 0, err
+				}
+				inserted++
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return 0, 0, err
+		}
+		return inserted, updated, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	inserted := 0
+	updated := 0
+
+	for _, c := range classes {
+		found := false
+		for _, existing := range r.store.Classes {
+			if existing.ID == c.ID {
+				existing.Name = c.Name
+				existing.Grade = c.Grade
+				existing.Type = c.Type
+				existing.Model = c.Model
+				existing.Price = c.Price
+				existing.Desc = c.Desc
+				existing.IsPopular = c.IsPopular
+				updated++
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.store.Classes = append(r.store.Classes, c)
+			inserted++
+		}
+	}
+
+	return inserted, updated, r.save()
+}
+
+// BatchInsertLeads chèn hàng loạt học sinh/phụ huynh đăng ký từ Excel
+func (r *CentralRepository) BatchInsertLeads(leads []*domain.Lead) (int, error) {
+	if r.db != nil {
+		tx, err := r.db.Begin()
+		if err != nil {
+			return 0, err
+		}
+		defer tx.Rollback()
+
+		inserted := 0
+		for _, l := range leads {
+			query := `INSERT INTO leads (parent_name, phone_number, student_name, grade, learning_model, class_type, academic_performance, status, consulted_by, created_at)
+			          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`
+			if l.Status == "" {
+				l.Status = "pending"
+			}
+			if l.CreatedAt.IsZero() {
+				l.CreatedAt = time.Now()
+			}
+			err := tx.QueryRow(query, l.ParentName, l.PhoneNumber, l.StudentName, l.Grade, l.LearningModel, l.ClassType, l.AcademicPerformance, l.Status, l.ConsultedBy, l.CreatedAt).Scan(&l.ID)
+			if err != nil {
+				return 0, err
+			}
+			inserted++
+		}
+
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+		return inserted, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	inserted := 0
+	for _, l := range leads {
+		l.ID = r.nextLeadID
+		r.nextLeadID++
+		if l.Status == "" {
+			l.Status = "pending"
+		}
+		if l.CreatedAt.IsZero() {
+			l.CreatedAt = time.Now()
+		}
+		r.store.Leads = append(r.store.Leads, l)
+		inserted++
+	}
+
+	return inserted, r.save()
+}
+
+

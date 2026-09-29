@@ -2,8 +2,11 @@ package usecase
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"toan-co-tra-backend/internal/domain"
 	"toan-co-tra-backend/internal/repository"
+	"toan-co-tra-backend/pkg/excel"
 )
 
 type AdminUsecase struct {
@@ -172,4 +175,96 @@ func (uc *AdminUsecase) DeleteGalleryImage(id int64) error {
 	}
 	return uc.repo.DeleteImage(id)
 }
+
+// -----------------------------------------------------------------------------
+// TÍNH NĂNG XUẤT / NHẬP EXCEL
+// -----------------------------------------------------------------------------
+
+// ExportClassesExcel xuất toàn bộ danh sách lớp học ra file Excel
+func (uc *AdminUsecase) ExportClassesExcel() ([]byte, error) {
+	classes, err := uc.repo.FindAllClasses()
+	if err != nil {
+		return nil, err
+	}
+	return excel.ExportClassesToExcel(classes)
+}
+
+// GetClassesExcelTemplate lấy file Excel mẫu lớp học
+func (uc *AdminUsecase) GetClassesExcelTemplate() ([]byte, error) {
+	return excel.GenerateClassTemplateExcel()
+}
+
+// ImportClassesExcel nhập danh sách lớp học từ Excel và chạy batch upsert
+func (uc *AdminUsecase) ImportClassesExcel(r io.Reader) (map[string]interface{}, error) {
+	classes, validationErrors, err := excel.ParseClassesFromExcel(r)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(classes) == 0 {
+		return map[string]interface{}{
+			"success": false,
+			"message": "Không có dòng dữ liệu hợp lệ nào để nhập",
+			"errors":  validationErrors,
+		}, nil
+	}
+
+	inserted, updated, err := uc.repo.BatchUpsertClasses(classes)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"success":  true,
+		"inserted": inserted,
+		"updated":  updated,
+		"total":    len(classes),
+		"errors":   validationErrors,
+		"message":  fmt.Sprintf("Xử lý thành công %d lớp học (Thêm mới: %d, Cập nhật: %d)", len(classes), inserted, updated),
+	}, nil
+}
+
+// ExportLeadsExcel xuất danh sách học viên đăng ký ra file Excel
+func (uc *AdminUsecase) ExportLeadsExcel() ([]byte, error) {
+	leads, err := uc.repo.FindAll()
+	if err != nil {
+		return nil, err
+	}
+	return excel.ExportLeadsToExcel(leads)
+}
+
+// GetLeadsExcelTemplate lấy file Excel mẫu học viên
+func (uc *AdminUsecase) GetLeadsExcelTemplate() ([]byte, error) {
+	return excel.GenerateLeadTemplateExcel()
+}
+
+// ImportLeadsExcel nhập danh sách học sinh từ Excel và chạy batch insert
+func (uc *AdminUsecase) ImportLeadsExcel(r io.Reader) (map[string]interface{}, error) {
+	leads, validationErrors, err := excel.ParseLeadsFromExcel(r)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(leads) == 0 {
+		return map[string]interface{}{
+			"success": false,
+			"message": "Không có dòng dữ liệu học sinh hợp lệ nào để nhập",
+			"errors":  validationErrors,
+		}, nil
+	}
+
+	inserted, err := uc.repo.BatchInsertLeads(leads)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"success":  true,
+		"inserted": inserted,
+		"total":    len(leads),
+		"errors":   validationErrors,
+		"message":  fmt.Sprintf("Thêm mới thành công %d học viên vào hệ thống", inserted),
+	}, nil
+}
+
 

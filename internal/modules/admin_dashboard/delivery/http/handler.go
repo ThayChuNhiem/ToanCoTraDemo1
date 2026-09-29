@@ -564,3 +564,170 @@ func (h *AdminHandler) ManageGallery(w http.ResponseWriter, r *http.Request) {
 		h.writeJSONError(w, http.StatusBadRequest, "Hành động (Action) không hợp lệ")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// HTTP HANDLERS CHO TÍNH NĂNG XUẤT / NHẬP EXCEL
+// -----------------------------------------------------------------------------
+
+// ExportClassesExcel xử lý GET /api/v1/admin/classes/export
+func (h *AdminHandler) ExportClassesExcel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeJSONError(w, http.StatusMethodNotAllowed, "Phương thức HTTP không được hỗ trợ")
+		return
+	}
+
+	if session := h.authenticateAdmin(w, r); session == nil {
+		return
+	}
+
+	data, err := h.uc.ExportClassesExcel()
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, "Lỗi tạo file Excel danh sách lớp học: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"DanhSachLopHoc.xlsx\"")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// DownloadClassesTemplate xử lý GET /api/v1/admin/classes/template
+func (h *AdminHandler) DownloadClassesTemplate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeJSONError(w, http.StatusMethodNotAllowed, "Phương thức HTTP không được hỗ trợ")
+		return
+	}
+
+	if session := h.authenticateAdmin(w, r); session == nil {
+		return
+	}
+
+	data, err := h.uc.GetClassesExcelTemplate()
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, "Lỗi tạo file mẫu Excel: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"MauNhapLopHoc.xlsx\"")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// ImportClassesExcel xử lý POST /api/v1/admin/classes/import
+func (h *AdminHandler) ImportClassesExcel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeJSONError(w, http.StatusMethodNotAllowed, "Phương thức HTTP không được hỗ trợ")
+		return
+	}
+
+	if session := h.authenticateAdmin(w, r); session == nil {
+		return
+	}
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "Dung lượng tệp tin tải lên vượt quá giới hạn 10MB")
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "Không tìm thấy tệp tin tải lên (yêu cầu field 'file')")
+		return
+	}
+	defer file.Close()
+
+	result, err := h.uc.ImportClassesExcel(file)
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+// ExportLeadsExcel xử lý GET /api/v1/admin/leads/export
+func (h *AdminHandler) ExportLeadsExcel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeJSONError(w, http.StatusMethodNotAllowed, "Phương thức HTTP không được hỗ trợ")
+		return
+	}
+
+	if session := h.authenticateAdmin(w, r); session == nil {
+		return
+	}
+
+	data, err := h.uc.ExportLeadsExcel()
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, "Lỗi tạo file Excel danh sách học sinh: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"DanhSachHocVien.xlsx\"")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// DownloadLeadsTemplate xử lý GET /api/v1/admin/leads/template
+func (h *AdminHandler) DownloadLeadsTemplate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeJSONError(w, http.StatusMethodNotAllowed, "Phương thức HTTP không được hỗ trợ")
+		return
+	}
+
+	if session := h.authenticateAdmin(w, r); session == nil {
+		return
+	}
+
+	data, err := h.uc.GetLeadsExcelTemplate()
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, "Lỗi tạo file mẫu Excel học viên: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"MauNhapHocVien.xlsx\"")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// ImportLeadsExcel xử lý POST /api/v1/admin/leads/import
+func (h *AdminHandler) ImportLeadsExcel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeJSONError(w, http.StatusMethodNotAllowed, "Phương thức HTTP không được hỗ trợ")
+		return
+	}
+
+	if session := h.authenticateAdmin(w, r); session == nil {
+		return
+	}
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "Dung lượng tệp tin tải lên vượt quá giới hạn 10MB")
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "Không tìm thấy tệp tin tải lên (yêu cầu field 'file')")
+		return
+	}
+	defer file.Close()
+
+	result, err := h.uc.ImportLeadsExcel(file)
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+

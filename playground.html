@@ -1757,11 +1757,24 @@
                         <h2>Màn Hình Quản Trị Sales & Lịch Hẹn</h2>
                         <p style="font-size: 12px; color: var(--text-muted);">Lead được cập nhật tự động thời gian thực qua Server-Sent Events (SSE)</p>
                     </div>
-                    <div style="display: flex; gap: 15px; align-items: center;">
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <button type="button" class="btn-action-small" onclick="exportLeadsExcel()" style="background: var(--accent-green); color: white; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 11px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer;">
+                            <span>📥 Xuất Excel</span>
+                        </button>
+                        <button type="button" class="btn-action-small" onclick="downloadLeadsTemplate()" style="background: #3B82F6; color: white; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 11px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer;">
+                            <span>📄 Tải Mẫu Học Viên</span>
+                        </button>
+                        <label class="btn-action-small" style="background: var(--accent-amber); color: var(--text-dark); display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 11px; font-weight: 700; border-radius: 6px; border: none; cursor: pointer; margin-bottom: 0;">
+                            <span>📤 Nhập Học Viên từ Excel</span>
+                            <input type="file" id="import-leads-excel-file" accept=".xlsx" style="display: none;" onchange="importLeadsExcel(this)">
+                        </label>
                         <div id="sales-active-user" class="user-badge">Đang kết nối...</div>
                         <button class="btn-logout" onclick="logoutSession('sales')">Đăng xuất</button>
                     </div>
                 </div>
+
+                <!-- Khu vực thông báo kết quả nhập Excel cho Học viên -->
+                <div id="leads-excel-alert" style="display: none; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 12px; line-height: 1.5;"></div>
 
                 <div class="leads-list" id="sales-leads-list">
                     <!-- Danh sách Lead đăng ký học thử -->
@@ -1878,7 +1891,25 @@
                             </form>
                         </div>
 
-                        <h4 style="font-size: 14px; margin-bottom: 8px; font-weight: 600;">Danh Sách Lớp Học Hệ Thống</h4>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                            <h4 style="font-size: 14px; margin-bottom: 0; font-weight: 600;">Danh Sách Lớp Học Hệ Thống</h4>
+                            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                <button type="button" class="btn-action-small" onclick="exportClassesExcel()" style="background: var(--accent-green); color: white; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 11px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer;">
+                                    <span>📥 Xuất Excel</span>
+                                </button>
+                                <button type="button" class="btn-action-small" onclick="downloadClassesTemplate()" style="background: #3B82F6; color: white; display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 11px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer;">
+                                    <span>📄 Tải File Mẫu</span>
+                                </button>
+                                <label class="btn-action-small" style="background: var(--accent-amber); color: var(--text-dark); display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 11px; font-weight: 700; border-radius: 6px; border: none; cursor: pointer; margin-bottom: 0;">
+                                    <span>📤 Nhập từ File Excel</span>
+                                    <input type="file" id="import-classes-excel-file" accept=".xlsx" style="display: none;" onchange="importClassesExcel(this)">
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Khu vực thông báo kết quả nhập Excel cho Lớp học -->
+                        <div id="classes-excel-alert" style="display: none; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 12px; line-height: 1.5;"></div>
+
                         <div style="max-height: 250px; overflow-y: auto; overflow-x: auto; border: var(--glass-border); border-radius: 8px; background: white;">
                             <table class="admin-list-table" style="margin-top: 0; font-size: 12px;">
                                 <thead>
@@ -2879,6 +2910,259 @@
 
             // 6. Tải danh sách hình ảnh hoạt động lớp học
             loadAdminGallery();
+        }
+
+        // ----------------------------------------------------
+        // TÍNH NĂNG XUẤT / NHẬP EXCEL CHO LỚP HỌC (CLASSES)
+        // ----------------------------------------------------
+
+        // 1. Xuất danh sách lớp học ra file Excel
+        function exportClassesExcel() {
+            if (!authToken) {
+                alert('Vui lòng đăng nhập với quyền Quản trị viên (Admin) để xuất dữ liệu.');
+                return;
+            }
+            fetch('/api/v1/admin/classes/export', {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            })
+            .then(res => {
+                if (!res.ok) throw new Error('Không thể xuất file Excel (Mã lỗi ' + res.status + ')');
+                return res.blob();
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'DanhSachLopHoc.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            })
+            .catch(err => {
+                alert('Lỗi xuất Excel: ' + err.message);
+            });
+        }
+
+        // 2. Tải file mẫu Excel lớp học
+        function downloadClassesTemplate() {
+            if (!authToken) {
+                alert('Vui lòng đăng nhập với quyền Quản trị viên (Admin) để tải mẫu.');
+                return;
+            }
+            fetch('/api/v1/admin/classes/template', {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            })
+            .then(res => {
+                if (!res.ok) throw new Error('Không thể tải file mẫu (Mã lỗi ' + res.status + ')');
+                return res.blob();
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'MauNhapLopHoc.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            })
+            .catch(err => {
+                alert('Lỗi tải file mẫu: ' + err.message);
+            });
+        }
+
+        // 3. Nhập từ file Excel lớp học (Batch Upsert)
+        function importClassesExcel(input) {
+            if (!input.files || input.files.length === 0) return;
+            const file = input.files[0];
+            input.value = ''; // Reset input để có thể chọn lại cùng file nếu muốn
+
+            if (!authToken) {
+                alert('Vui lòng đăng nhập với quyền Quản trị viên (Admin) để thực hiện.');
+                return;
+            }
+
+            const alertBox = document.getElementById('classes-excel-alert');
+            alertBox.style.display = 'block';
+            alertBox.style.background = '#EFF6FF';
+            alertBox.style.border = '1px solid #93C5FD';
+            alertBox.style.color = '#1D4ED8';
+            alertBox.innerHTML = '⏳ Đang tải lên và phân tích file Excel lớp học...';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/api/v1/admin/classes/import', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + authToken },
+                body: formData
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    let msg = '<strong>✅ Nhập dữ liệu lớp học thành công!</strong> ' + (result.message || '');
+                    if (result.errors && result.errors.length > 0) {
+                        msg += '<div style="margin-top: 8px; font-size: 11px; color: #B45309;"><strong>⚠️ Cảnh báo một số dòng bị bỏ qua do không hợp lệ:</strong><ul style="margin: 4px 0 0 16px;">';
+                        result.errors.forEach(e => {
+                            msg += '<li>' + e + '</li>';
+                        });
+                        msg += '</ul></div>';
+                    }
+                    alertBox.style.background = '#ECFDF5';
+                    alertBox.style.border = '1px solid #6EE7B7';
+                    alertBox.style.color = '#065F46';
+                    alertBox.innerHTML = msg;
+
+                    loadAdminClasses();
+                    loadHomepageClasses();
+                } else {
+                    let errMsg = '<strong>❌ Nhập file thất bại:</strong> ' + (result.error || result.message || 'Lỗi không xác định');
+                    if (result.errors && result.errors.length > 0) {
+                        errMsg += '<ul style="margin: 6px 0 0 16px;">';
+                        result.errors.forEach(e => {
+                            errMsg += '<li>' + e + '</li>';
+                        });
+                        errMsg += '</ul>';
+                    }
+                    alertBox.style.background = '#FEF2F2';
+                    alertBox.style.border = '1px solid #FCA5A5';
+                    alertBox.style.color = '#991B1B';
+                    alertBox.innerHTML = errMsg;
+                }
+            })
+            .catch(err => {
+                alertBox.style.background = '#FEF2F2';
+                alertBox.style.border = '1px solid #FCA5A5';
+                alertBox.style.color = '#991B1B';
+                alertBox.innerHTML = '<strong>❌ Lỗi kết nối hệ thống:</strong> ' + err.message;
+            });
+        }
+
+        // ----------------------------------------------------
+        // TÍNH NĂNG XUẤT / NHẬP EXCEL CHO HỌC VIÊN (LEADS)
+        // ----------------------------------------------------
+
+        // 1. Xuất danh sách học viên ra Excel
+        function exportLeadsExcel() {
+            if (!authToken) {
+                alert('Vui lòng đăng nhập để xuất dữ liệu học viên.');
+                return;
+            }
+            fetch('/api/v1/admin/leads/export', {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            })
+            .then(res => {
+                if (!res.ok) throw new Error('Không thể xuất file Excel (Mã lỗi ' + res.status + ')');
+                return res.blob();
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'DanhSachHocVien.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            })
+            .catch(err => {
+                alert('Lỗi xuất Excel: ' + err.message);
+            });
+        }
+
+        // 2. Tải file mẫu Excel học viên
+        function downloadLeadsTemplate() {
+            if (!authToken) {
+                alert('Vui lòng đăng nhập để tải file mẫu học viên.');
+                return;
+            }
+            fetch('/api/v1/admin/leads/template', {
+                headers: { 'Authorization': 'Bearer ' + authToken }
+            })
+            .then(res => {
+                if (!res.ok) throw new Error('Không thể tải file mẫu (Mã lỗi ' + res.status + ')');
+                return res.blob();
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'MauNhapHocVien.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            })
+            .catch(err => {
+                alert('Lỗi tải file mẫu: ' + err.message);
+            });
+        }
+
+        // 3. Nhập học viên từ file Excel (Batch Insert)
+        function importLeadsExcel(input) {
+            if (!input.files || input.files.length === 0) return;
+            const file = input.files[0];
+            input.value = '';
+
+            if (!authToken) {
+                alert('Vui lòng đăng nhập để nhập học viên từ Excel.');
+                return;
+            }
+
+            const alertBox = document.getElementById('leads-excel-alert');
+            alertBox.style.display = 'block';
+            alertBox.style.background = '#EFF6FF';
+            alertBox.style.border = '1px solid #93C5FD';
+            alertBox.style.color = '#1D4ED8';
+            alertBox.innerHTML = '⏳ Đang tải lên và phân tích danh sách học sinh từ Excel...';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/api/v1/admin/leads/import', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + authToken },
+                body: formData
+            })
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    let msg = '<strong>✅ Nhập danh sách học viên thành công!</strong> ' + (result.message || '');
+                    if (result.errors && result.errors.length > 0) {
+                        msg += '<div style="margin-top: 8px; font-size: 11px; color: #B45309;"><strong>⚠️ Cảnh báo các dòng bị bỏ qua:</strong><ul style="margin: 4px 0 0 16px;">';
+                        result.errors.forEach(e => {
+                            msg += '<li>' + e + '</li>';
+                        });
+                        msg += '</ul></div>';
+                    }
+                    alertBox.style.background = '#ECFDF5';
+                    alertBox.style.border = '1px solid #6EE7B7';
+                    alertBox.style.color = '#065F46';
+                    alertBox.innerHTML = msg;
+
+                    loadLeadsSalesPortal();
+                } else {
+                    let errMsg = '<strong>❌ Nhập file thất bại:</strong> ' + (result.error || result.message || 'Lỗi không xác định');
+                    if (result.errors && result.errors.length > 0) {
+                        errMsg += '<ul style="margin: 6px 0 0 16px;">';
+                        result.errors.forEach(e => {
+                            errMsg += '<li>' + e + '</li>';
+                        });
+                        errMsg += '</ul>';
+                    }
+                    alertBox.style.background = '#FEF2F2';
+                    alertBox.style.border = '1px solid #FCA5A5';
+                    alertBox.style.color = '#991B1B';
+                    alertBox.innerHTML = errMsg;
+                }
+            })
+            .catch(err => {
+                alertBox.style.background = '#FEF2F2';
+                alertBox.style.border = '1px solid #FCA5A5';
+                alertBox.style.color = '#991B1B';
+                alertBox.innerHTML = '<strong>❌ Lỗi kết nối hệ thống:</strong> ' + err.message;
+            });
         }
 
         // Load all classes dynamically in Admin Panel
